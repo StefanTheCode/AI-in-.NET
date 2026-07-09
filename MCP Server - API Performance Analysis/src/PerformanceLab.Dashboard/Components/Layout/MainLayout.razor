@@ -1,0 +1,21 @@
+@inherits LayoutComponentBase
+
+<div class="layout">
+    <nav class="sidebar">
+        <div class="sidebar-header">
+            <span class="logo">⚡</span>
+            <span class="logo-text">Perf Lab</span>
+        </div>
+        <ul class="nav-links">
+            <li><NavLink href="/" Match="NavLinkMatch.All">📊 Results</NavLink></li>
+            <li><NavLink href="/compare">🔀 Compare</NavLink></li>
+        </ul>
+        <div class="sidebar-footer">
+            <span class="mcp-badge">MCP-Powered</span>
+        </div>
+    </nav>
+
+    <main class="main-content">
+        @Body
+    </main>
+</div>

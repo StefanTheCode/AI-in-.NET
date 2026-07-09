@@ -1,0 +1,163 @@
+@page "/compare"
+@rendermode InteractiveServer
+@inject McpApiClient Api
+
+<PageTitle>Performance Lab — Compare</PageTitle>
+
+<div class="page-header">
+    <h1>Compare Results</h1>
+</div>
+
+@if (_error is not null)
+{
+    <div class="alert alert-error">@_error</div>
+}
+
+@if (_loading)
+{
+    <div class="loading-spinner">Loading…</div>
+}
+else if (_runs.Count < 2)
+{
+    <div class="empty-state">
+        <p>You need at least 2 stored results to compare.</p>
+        <p>Run two load tests via the MCP server first.</p>
+    </div>
+}
+else
+{
+    <div class="card">
+        <div class="compare-selectors">
+            <div class="selector-group">
+                <label>Baseline</label>
+                <select @bind="_baselineId">
+                    <option value="">— select —</option>
+                    @foreach (var r in _runs)
+                    {
+                        <option value="@r.Id">@r.Id — @r.Result.Url</option>
+                    }
+                </select>
+            </div>
+            <div class="selector-group">
+                <label>Candidate</label>
+                <select @bind="_candidateId">
+                    <option value="">— select —</option>
+                    @foreach (var r in _runs)
+                    {
+                        <option value="@r.Id">@r.Id — @r.Result.Url</option>
+                    }
+                </select>
+            </div>
+        </div>
+        <button class="btn btn-primary" @onclick="CompareAsync"
+                disabled="@(string.IsNullOrEmpty(_baselineId) || string.IsNullOrEmpty(_candidateId))">
+            Compare
+        </button>
+    </div>
+
+    @if (_baseline is not null && _candidate is not null)
+    {
+        <div class="card">
+            <h2>Side-by-Side Comparison</h2>
+            <table class="compare-table">
+                <thead>
+                    <tr>
+                        <th>Metric</th>
+                        <th>Baseline<br/><small>@_baseline.Result.Url</small></th>
+                        <th>Candidate<br/><small>@_candidate.Result.Url</small></th>
+                        <th>Change</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @CompareRow("RPS",       _baseline.Result.RequestsPerSecond,   _candidate.Result.RequestsPerSecond,   "F1", higher: true)
+                    @CompareRow("Avg (ms)",  _baseline.Result.AverageResponseTimeMs,_candidate.Result.AverageResponseTimeMs,"F0", higher: false)
+                    @CompareRow("P50 (ms)",  _baseline.Result.P50Ms,               _candidate.Result.P50Ms,               "F0", higher: false)
+                    @CompareRow("P95 (ms)",  _baseline.Result.P95Ms,               _candidate.Result.P95Ms,               "F0", higher: false)
+                    @CompareRow("P99 (ms)",  _baseline.Result.P99Ms,               _candidate.Result.P99Ms,               "F0", higher: false)
+                    @CompareRow("Max (ms)",  _baseline.Result.MaxMs,               _candidate.Result.MaxMs,               "F0", higher: false)
+                    @CompareRow("Errors %",  _baseline.Result.ErrorRate,           _candidate.Result.ErrorRate,           "F1", higher: false)
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Severity badges -->
+        <div class="card">
+            <div class="severity-compare">
+                <div>
+                    <strong>Baseline severity:</strong>
+                    <span class="badge @SeverityClass(_baseline.Analysis?.Severity)">@(_baseline.Analysis?.Severity ?? "—")</span>
+                </div>
+                <div>
+                    <strong>Candidate severity:</strong>
+                    <span class="badge @SeverityClass(_candidate.Analysis?.Severity)">@(_candidate.Analysis?.Severity ?? "—")</span>
+                </div>
+            </div>
+        </div>
+    }
+}
+
+@code {
+    private List<StoredTestRun> _runs      = [];
+    private string?             _baselineId;
+    private string?             _candidateId;
+    private StoredTestRun?      _baseline;
+    private StoredTestRun?      _candidate;
+    private bool                _loading;
+    private string?             _error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _loading = true;
+        try   { _runs = await Api.GetAllResultsAsync(); }
+        catch (Exception ex) { _error = ex.Message; }
+        finally { _loading = false; }
+    }
+
+    private async Task CompareAsync()
+    {
+        if (string.IsNullOrEmpty(_baselineId) || string.IsNullOrEmpty(_candidateId)) return;
+
+        _baseline  = _runs.FirstOrDefault(r => r.Id == _baselineId);
+        _candidate = _runs.FirstOrDefault(r => r.Id == _candidateId);
+
+        if (_baseline is null || _candidate is null)
+        {
+            _error = "Could not find selected results.";
+            return;
+        }
+
+        await Task.CompletedTask; // async entry point for future remote fetch
+    }
+
+    private RenderFragment CompareRow(string label, double baseline, double candidate,
+        string format, bool higher) => __builder =>
+    {
+        var change    = baseline > 0 ? (candidate - baseline) / baseline * 100 : 0;
+        // For metrics where higher is better (RPS), improvement = positive change
+        // For metrics where lower is better (latency), improvement = negative change
+        var improved  = higher ? change > 5 : change < -5;
+        var regressed = higher ? change < -5 : change > 5;
+        var cssClass  = improved ? "improved" : regressed ? "regressed" : "neutral";
+        var icon      = improved ? "✅" : regressed ? "❌" : "≈";
+
+        __builder.OpenElement(0, "tr");
+        __builder.AddContent(1, (RenderFragment)(__b => {
+            __b.OpenElement(0, "td"); __b.AddContent(1, label);                                     __b.CloseElement();
+            __b.OpenElement(0, "td"); __b.AddContent(1, baseline.ToString(format));                  __b.CloseElement();
+            __b.OpenElement(0, "td"); __b.AddContent(1, candidate.ToString(format));                 __b.CloseElement();
+            __b.OpenElement(0, "td");
+            __b.AddAttribute(0, "class", cssClass);
+            __b.AddContent(1, $"{icon} {(change >= 0 ? "+" : "")}{change:F1}%");
+            __b.CloseElement();
+        }));
+        __builder.CloseElement();
+    };
+
+    private static string SeverityClass(string? severity) => severity switch
+    {
+        "Critical" => "severity-critical",
+        "High"     => "severity-high",
+        "Medium"   => "severity-medium",
+        _          => "severity-low",
+    };
+}

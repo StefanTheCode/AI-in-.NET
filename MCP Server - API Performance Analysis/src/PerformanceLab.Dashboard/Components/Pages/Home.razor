@@ -1,0 +1,212 @@
+@page "/"
+@rendermode InteractiveServer
+@inject McpApiClient Api
+@inject IJSRuntime JS
+
+<PageTitle>Performance Lab — Results</PageTitle>
+
+<div class="page-header">
+    <h1>Load Test Results</h1>
+    <div class="header-actions">
+        <button class="btn btn-secondary" @onclick="RefreshAsync" disabled="@_loading">
+            @(_loading ? "Loading…" : "↺ Refresh")
+        </button>
+        @if (_runs.Count > 0)
+        {
+            <button class="btn btn-danger" @onclick="ClearAsync">🗑 Clear All</button>
+        }
+    </div>
+</div>
+
+@if (_error is not null)
+{
+    <div class="alert alert-error">@_error</div>
+}
+
+@if (_loading)
+{
+    <div class="loading-spinner">Loading results…</div>
+}
+else if (_runs.Count == 0)
+{
+    <div class="empty-state">
+        <p>No results yet.</p>
+        <p>Connect an AI client to the MCP server at <code>http://localhost:5200/mcp</code> and run:</p>
+        <pre>run_load_test("http://localhost:5100/fast")</pre>
+    </div>
+}
+else
+{
+    <!-- Summary table -->
+    <div class="card">
+        <table class="results-table">
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Endpoint</th>
+                    <th>RPS</th>
+                    <th>Avg (ms)</th>
+                    <th>P95 (ms)</th>
+                    <th>P99 (ms)</th>
+                    <th>Errors</th>
+                    <th>Severity</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var run in _runs)
+                {
+                    <tr class="@SeverityClass(run.Analysis?.Severity)"
+                        @onclick="() => SelectRun(run)"
+                        style="cursor:pointer">
+                        <td><code>@run.Id</code></td>
+                        <td class="url-cell">@run.Result.Url</td>
+                        <td>@run.Result.RequestsPerSecond.ToString("F1")</td>
+                        <td>@run.Result.AverageResponseTimeMs.ToString("F0")</td>
+                        <td>@run.Result.P95Ms.ToString("F0")</td>
+                        <td>@run.Result.P99Ms.ToString("F0")</td>
+                        <td>@run.Result.ErrorRate.ToString("F1")%</td>
+                        <td><span class="badge @SeverityClass(run.Analysis?.Severity)">@(run.Analysis?.Severity ?? "—")</span></td>
+                        <td><button class="btn btn-sm" @onclick:stopPropagation="true" @onclick="() => SelectRun(run)">Details</button></td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Chart -->
+    @if (_runs.Count >= 2)
+    {
+        <div class="card">
+            <h2>Latency Comparison</h2>
+            <canvas id="latencyChart" height="80"></canvas>
+        </div>
+    }
+
+    <!-- Detail panel -->
+    @if (_selected is not null)
+    {
+        <div class="card detail-panel">
+            <div class="detail-header">
+                <h2>@_selected.Result.Url</h2>
+                <button class="btn btn-secondary btn-sm" @onclick="() => _selected = null">✕ Close</button>
+            </div>
+            <div class="metrics-grid">
+                <div class="metric"><span class="metric-label">RPS</span><span class="metric-value">@_selected.Result.RequestsPerSecond.ToString("F1")</span></div>
+                <div class="metric"><span class="metric-label">Avg</span><span class="metric-value">@_selected.Result.AverageResponseTimeMs.ToString("F0")ms</span></div>
+                <div class="metric"><span class="metric-label">P50</span><span class="metric-value">@_selected.Result.P50Ms.ToString("F0")ms</span></div>
+                <div class="metric"><span class="metric-label">P95</span><span class="metric-value">@_selected.Result.P95Ms.ToString("F0")ms</span></div>
+                <div class="metric"><span class="metric-label">P99</span><span class="metric-value">@_selected.Result.P99Ms.ToString("F0")ms</span></div>
+                <div class="metric"><span class="metric-label">Max</span><span class="metric-value">@_selected.Result.MaxMs.ToString("F0")ms</span></div>
+                <div class="metric"><span class="metric-label">Total</span><span class="metric-value">@_selected.Result.TotalRequests.ToString("N0")</span></div>
+                <div class="metric"><span class="metric-label">Errors</span><span class="metric-value">@_selected.Result.ErrorRate.ToString("F1")%</span></div>
+            </div>
+
+            @if (_selected.Analysis is not null)
+            {
+                <div class="analysis-section">
+                    <h3>Diagnosis — <span class="badge @SeverityClass(_selected.Analysis.Severity)">@_selected.Analysis.Severity</span></h3>
+                    <ul>
+                        @foreach (var issue in _selected.Analysis.Issues)
+                        {
+                            <li>@issue</li>
+                        }
+                    </ul>
+
+                    @if (_selected.Analysis.Recommendations.Count > 0)
+                    {
+                        <h3>Recommendations</h3>
+                        <ul>
+                            @foreach (var rec in _selected.Analysis.Recommendations)
+                            {
+                                <li>@rec</li>
+                            }
+                        </ul>
+                    }
+
+                    @if (_selected.Analysis.Optimizations.Count > 0)
+                    {
+                        <h3>.NET Optimizations</h3>
+                        <ul>
+                            @foreach (var opt in _selected.Analysis.Optimizations)
+                            {
+                                <li><code>@opt</code></li>
+                            }
+                        </ul>
+                    }
+                </div>
+            }
+        </div>
+    }
+}
+
+@code {
+    private List<StoredTestRun> _runs  = [];
+    private StoredTestRun?      _selected;
+    private bool                _loading;
+    private string?             _error;
+
+    protected override async Task OnInitializedAsync() => await RefreshAsync();
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender && _runs.Count >= 2)
+            await RenderChartAsync();
+    }
+
+    private async Task RefreshAsync()
+    {
+        _loading = true;
+        _error   = null;
+        try
+        {
+            _runs = await Api.GetAllResultsAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = $"Could not reach McpServer: {ex.Message}";
+            _runs  = [];
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task ClearAsync()
+    {
+        await Api.ClearResultsAsync();
+        _runs     = [];
+        _selected = null;
+    }
+
+    private void SelectRun(StoredTestRun run) =>
+        _selected = _selected?.Id == run.Id ? null : run;
+
+    private async Task RenderChartAsync()
+    {
+        var labels  = _runs.Select(r => r.Result.Label[..Math.Min(r.Result.Label.Length, 20)]).ToArray();
+        var avg     = _runs.Select(r => (object)r.Result.AverageResponseTimeMs).ToArray();
+        var p95     = _runs.Select(r => (object)r.Result.P95Ms).ToArray();
+        var p99     = _runs.Select(r => (object)r.Result.P99Ms).ToArray();
+
+        await JS.InvokeVoidAsync(
+            "performanceCharts.renderBarChart",
+            "latencyChart",
+            labels,
+            new[] {
+                new { label = "Avg",  data = avg,  backgroundColor = "#4f9cf9" },
+                new { label = "P95",  data = p95,  backgroundColor = "#f9a84f" },
+                new { label = "P99",  data = p99,  backgroundColor = "#f94f4f" },
+            },
+            "Latency (ms)");
+    }
+
+    private static string SeverityClass(string? severity) => severity switch
+    {
+        "Critical" => "severity-critical",
+        "High"     => "severity-high",
+        "Medium"   => "severity-medium",
+        _          => "severity-low",
+    };
+}
