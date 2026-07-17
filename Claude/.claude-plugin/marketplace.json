@@ -1,0 +1,31 @@
+{
+  "name": "thecodeman-claude-starter",
+  "owner": {
+    "name": "Stefan Đokić (TheCodeMan)"
+  },
+  "description": "5 free Claude Code skills for .NET developers (+ a security agent) — a starter set from the TheCodeMan AI ToolKit.",
+  "plugins": [
+    {
+      "name": "dotnet-claude-starter",
+      "source": "./",
+      "displayName": "5 Free .NET Claude Code Skills",
+      "description": "5 Claude Code skills for .NET: EF Core query optimizer, async/await auditor, clean architecture scaffolder, BenchmarkDotNet setup, and test coverage gap finder — plus an ASP.NET Core security auditor agent. Built for .NET 10 / C# 14.",
+      "version": "1.0.0",
+      "author": {
+        "name": "Stefan Đokić (TheCodeMan)"
+      },
+      "homepage": "https://thecodeman.net",
+      "repository": "https://github.com/StefanTheCode/dotnet-claude-starter",
+      "license": "MIT",
+      "category": "dotnet",
+      "keywords": ["dotnet", "csharp", "aspnetcore", "ef-core", "performance", "testing", "security"],
+      "strict": false,
+      "skills": [
+        "./skills/"
+      ],
+      "agents": [
+        "./agents/aspnetcore-security-auditor.md"
+      ]
+    }
+  ]
+}

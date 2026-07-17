@@ -1,49 +1,61 @@
 # Install & Use
 
-## Option A — Claude Code plugin (easiest, recommended)
+These files are a starter set you copy into Claude Code. Two folders matter: `skills/` and `agents/`, plus the `templates/` file.
 
-Install everything — all 44+ skills and 7 agents — with two commands:
+## Install the skills
 
-```shell
-/plugin marketplace add StefanTheCode/dotnet-ai-toolkit
-/plugin install dotnet-ai-toolkit@thecodeman-ai-toolkit
+Copy the skill folders into a `skills/` directory Claude Code reads:
+
+```bash
+# user-level — available in every project (recommended)
+mkdir -p ~/.claude/skills
+cp -r skills/* ~/.claude/skills/
+
+# or project-level — just this project
+mkdir -p .claude/skills
+cp -r skills/* .claude/skills/
 ```
 
-Skills trigger automatically on matching requests; invoke an agent by asking for what it does (*"audit the security of this API"*). Pull updates anytime:
+## Install the agent
 
-```shell
-/plugin marketplace update thecodeman-ai-toolkit
+```bash
+mkdir -p ~/.claude/agents
+cp agents/aspnetcore-security-auditor.md ~/.claude/agents/
 ```
 
-Available in every project, no manual copying.
+## Add the CLAUDE.md template
+
+Copy `templates/dotnet-CLAUDE-md-template.md` to the **root of your .NET project**, rename it to `CLAUDE.md`, and fill in the blanks (instructions are at the top of the file). Claude Code loads it automatically at the start of every session.
 
 ---
 
-## Option B — Manual (single skill or agent)
+## Use
 
-**Skill** — copy the folder into a `skills/` directory Claude Code reads:
+Reopen your Claude Code session, then just describe what you want:
 
-```bash
-# project-level
-mkdir -p .claude/skills && cp -r skills/ef-core-query-optimizer .claude/skills/
-# or user-level (everywhere)
-cp -r skills/ef-core-query-optimizer ~/.claude/skills/
+```
+> This EF query is slow, optimize it
+> Review this async code for deadlocks
+> Scaffold a clean architecture solution
+> Set up BenchmarkDotNet to compare these two methods
+> What's not tested in this project?
+> Audit the security of this API      ← runs the security agent
 ```
 
-**Agent** — copy the `.md` into the agents directory:
-
-```bash
-mkdir -p .claude/agents && cp agents/dotnet-architecture-reviewer.md .claude/agents/
-```
-
-Reopen the session. Skills trigger automatically; agents are invoked by asking for what they do.
+Skills trigger automatically when your request matches; the agent runs when you ask for what it does.
 
 ---
 
 ## Verifying a skill works
 
-1. Install it.
-2. Start a fresh session and use a prompt from the skill's `USAGE.md` examples.
+1. Install it (above) and reopen the session.
+2. Use a prompt from the skill's `USAGE.md` examples.
 3. Confirm Claude applies the skill's checklist/format rather than a generic answer.
 
 If a skill doesn't trigger, the fix is almost always the **description** in its `SKILL.md` frontmatter — make it specific about when to fire.
+
+---
+
+## Want the full toolkit?
+
+This is 5 skills + 1 agent. The full set — **44+ skills, 7 agents, and CLAUDE.md templates** — lives inside the **[TheCodeMan AI ToolKit community](https://www.skool.com/thecodeman-ai-toolkit-9723)**, with lessons, live sessions, and courses on top.
