@@ -1,54 +1,76 @@
-# AI in .NET — Starter Kit
+# AI Roadmap for .NET Developers — 2026
 
-Everything you need to start building **real AI features in .NET 10** — three complete, runnable projects plus a set of Claude Code skills that make Claude write production-grade .NET for you.
+**The only guide you need to go from "AI-curious" to shipping real AI in .NET.**
 
-This is the source bundle from **[thecodeman.net/ai-in-dotnet-starter-kit](https://thecodeman.net/ai-in-dotnet-starter-kit)**. Built and curated by [Stefan Đokić — TheCodeMan](https://thecodeman.net), Microsoft MVP.
+No hype. No random tool lists. A clear path covering the two things every .NET developer now needs: **using AI to build faster** (Claude Code, agents, skills, MCP) and **building AI features into your own apps** (LLMs, embeddings, RAG, agents).
 
----
+👉 **[Read the full roadmap →](docs/roadmap.md)**
 
-## What's inside
-
-| Folder | What it is |
-|--------|-----------|
-| **[Semantic Search AI Example](./Semantic%20Search%20AI%20Example)** | Search that understands *meaning*, not keywords. Local embeddings with Ollama + `Microsoft.Extensions.AI`. |
-| **[RAG Basics](./RAG%20Basics)** | A minimal Retrieval-Augmented Generation pipeline — embed your text, store vectors in Postgres, retrieve and ground the LLM's answers in your data. |
-| **[MCP Server - API Performance Analysis](./MCP%20Server%20-%20API%20Performance%20Analysis)** | A Model Context Protocol server that lets AI clients (Copilot, Claude, Cursor) diagnose .NET API performance in real time. |
-| **[Claude](./Claude)** | A curated set of **Claude Code skills + an agent + a CLAUDE.md template** so Claude writes idiomatic .NET on your own projects. |
-
-Each code module is a self-contained solution with its own README and a companion article on the blog.
+Built by [Stefan Đokić — TheCodeMan](https://thecodeman.net), Microsoft MVP.
 
 ---
 
-## Prerequisites
+## The Path
+
+```
+Step 1: AI coding assistants — get faster today   → Week 1
+Step 2: Skills, agents & custom workflows          → Week 2
+Step 3: MCP — connect AI to your tools             → Week 3
+Step 4: LLMs in .NET — your first AI feature       → Week 4
+Step 5: Embeddings & semantic search               → Week 5
+Step 6: RAG — ground the AI in your data           → Week 6
+Step 7: AI agents in .NET                          → Week 7
+Step 8: Production AI (evals, cost, guardrails)    → Week 8
+```
+
+Two tracks: **Use AI** (Steps 1–3) and **Build AI** (Steps 4–8). Each step builds on the last. Don't skip ahead.
+
+---
+
+## Companion code in this repo
+
+The roadmap isn't just reading — three steps have full, runnable .NET projects right here to build from:
+
+| Folder | Roadmap step | What it is |
+|--------|--------------|-----------|
+| **[Claude](./Claude)** | Step 2 | Claude Code **skills + an agent + a CLAUDE.md template** that make Claude write idiomatic .NET. |
+| **[MCP Server - API Performance Analysis](./MCP%20Server%20-%20API%20Performance%20Analysis)** | Step 3 | A Model Context Protocol server in C# that lets AI clients (Copilot, Claude, Cursor) diagnose .NET API performance. |
+| **[Semantic Search AI Example](./Semantic%20Search%20AI%20Example)** | Step 5 | Search by *meaning* — local embeddings with Ollama + `Microsoft.Extensions.AI`. |
+| **[RAG Basics](./RAG%20Basics)** | Step 6 | A minimal RAG pipeline — embed, store vectors in Postgres, ground the LLM's answers in your data. |
+
+Each project is a self-contained solution with its own README.
+
+---
+
+## Prerequisites (for the code)
 
 - **.NET 10 SDK**
-- **[Ollama](https://ollama.com)** running locally (for embeddings and local LLMs) — pull the models each module lists (e.g. `ollama pull all-minilm`)
-- **PostgreSQL with pgvector** — the modules use [Neon Serverless Postgres](https://neon.tech), but any pgvector-enabled Postgres works
+- **[Ollama](https://ollama.com)** running locally (embeddings + local LLMs) — pull the models each module lists (e.g. `ollama pull all-minilm`)
+- **PostgreSQL with pgvector** — any pgvector-enabled Postgres works (e.g. [Neon](https://neon.tech))
 - For the MCP module: an MCP-compatible client (GitHub Copilot with MCP, or Claude Desktop)
 
-> **Before you run anything:** open each module's `appsettings.json` and replace the connection strings / API keys with your own. Never commit real secrets.
+> **Before you run anything:** open each module's `appsettings.json` and set your **own** connection strings / API keys. Never commit real secrets.
 
 ---
 
-## Quick start
+## 🎥 A mini-course is coming
 
-1. Clone the repo (or unzip the download).
-2. Pick a module and open its folder — start with **Semantic Search** if you're new to embeddings.
-3. Read that module's README, set your `appsettings.json`, and `dotnet run`.
-4. Install the **Claude** skills (see [`Claude/INSTALL.md`](./Claude/INSTALL.md)) and let Claude Code help you extend the code.
+I'm recording this roadmap step by step as short video clips — a full mini-course walking through every stage with real .NET code. New clips drop inside the **[.NET AI ToolKit community](https://www.skool.com/thecodeman-ai-toolkit-9723)** (7-day free trial), where you also get the full skill set (44+ skills, 7 agents), the tools, and me answering your questions.
+
+📬 Or follow along free: [weekly AI-in-.NET newsletter](https://thecodeman.net) (20k+ .NET devs) · ▶️ [YouTube](https://www.youtube.com/@thecodeman_)
 
 ---
 
-## Want to go further?
+## Who This Is For
 
-These three modules and five skills are the free starter. Inside the **[TheCodeMan AI ToolKit community](https://www.skool.com/thecodeman-ai-toolkit-9723)** you get the full arsenal — **44+ Claude skills, 7 specialist agents, and CLAUDE.md templates** — plus step-by-step lessons, live build-with-me sessions, and courses on building AI features and agents in .NET. It's where I teach how to actually use this in production.
-
-📬 Weekly AI-in-.NET newsletter (20k+ .NET devs): **[thecodeman.net](https://thecodeman.net)** · ▶️ **[YouTube](https://www.youtube.com/@thecodeman_)**
+- **.NET developers** who keep hearing about AI but don't know where it fits in real work
+- **Backend engineers** who want to build AI features into their own apps
+- **Teams** trying to actually use AI coding tools well, not just install them
 
 ---
 
 ## License
 
-Free to use and adapt. See individual modules for details.
+Free to use, share, and adapt. If it helps you, share it with a .NET dev who needs it. A ⭐ is appreciated.
 
 *Built by [Stefan Đokić](https://thecodeman.net) · [LinkedIn](https://www.linkedin.com/in/djokic-stefan/) · [X](https://x.com/TheCodeMan__)*
