@@ -1,0 +1,15 @@
+{
+  // VS Code (GitHub Copilot) MCP config. Copy this into your workspace's
+  // .vscode/mcp.json, then run the "MCP: List Servers" command to start it.
+  "servers": {
+    "notes": {
+      "type": "stdio",
+      "command": "dotnet",
+      "args": [
+        "run",
+        "--project",
+        "${workspaceFolder}/10 - Your Own MCP Server/src/NotesMcp"
+      ]
+    }
+  }
+}

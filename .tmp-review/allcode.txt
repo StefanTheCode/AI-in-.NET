@@ -1,0 +1,3490 @@
+==== 01 - Expense Tracker CLI/src/ExpenseTracker/ExpenseTracker.csproj
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <!-- Treat warnings as errors so the "fix the AI code" lessons actually bite. -->
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+</Project>
+==== 01 - Expense Tracker CLI/src/ExpenseTracker/Models/Category.cs
+namespace ExpenseTracker.Models;
+
+/// <summary>
+/// A fixed set of spending categories.
+///
+/// LESSON — model the domain, don't stringly-type it.
+/// AI assistants love to represent things like this as a plain `string`
+/// ("food", "Food", "FOOD ", "grocery"...). That looks fine in a demo and
+/// then explodes the moment you try to GROUP BY category, because every typo
+/// becomes a new "category". An enum makes the valid values explicit, gives
+/// you IntelliSense, and makes grouping/reporting reliable.
+/// </summary>
+public enum Category
+{
+    Food,
+    Transport,
+    Housing,
+    Entertainment,
+    Health,
+    Utilities,
+    Other
+}
+==== 01 - Expense Tracker CLI/src/ExpenseTracker/Models/Expense.cs
+namespace ExpenseTracker.Models;
+
+/// <summary>
+/// A single expense.
+///
+/// LESSON — use a <c>record</c> for immutable data.
+/// An expense, once written down, shouldn't silently mutate. A positional
+/// <c>record</c> gives us value-equality (two expenses with the same values
+/// are "equal"), a readable <c>ToString()</c>, and non-destructive updates
+/// via <c>with</c> — all for free, in one line.
+///
+/// LESSON — use the right types for the job.
+/// * <see cref="decimal"/> for money (NEVER <c>double</c> — binary floating
+///   point can't represent 0.10 exactly, and money bugs are the worst bugs).
+/// * <see cref="DateOnly"/> for a calendar date with no time-of-day noise.
+/// </summary>
+public record Expense(
+    int Id,
+    string Description,
+    decimal Amount,
+    Category Category,
+    DateOnly Date);
+==== 01 - Expense Tracker CLI/src/ExpenseTracker/Program.cs
+using System.Globalization;
+using ExpenseTracker.Models;
+using ExpenseTracker.Services;
+
+// =============================================================================
+// Expense Tracker CLI — Starter project #1
+// Focus: LINQ + collections, and reading/fixing AI-generated code.
+//
+// This file uses top-level statements (no Main boilerplate) and a simple
+// menu loop. Every branch is a small, readable method so you can follow the
+// data flow: input -> ExpenseStore -> ExpenseAnalyzer -> formatted output.
+// =============================================================================
+
+// Money should print with the user's culture (currency symbol, separators).
+var culture = CultureInfo.CurrentCulture;
+
+// The JSON "database" lives next to the executable so runs persist.
+var dataFile = Path.Combine(AppContext.BaseDirectory, "expenses.json");
+var store = new ExpenseStore(dataFile);
+store.SeedIfEmpty();
+
+Console.WriteLine("💰 Expense Tracker CLI");
+Console.WriteLine($"   Data file: {dataFile}");
+
+while (true)
+{
+    PrintMenu();
+    Console.Write("> ");
+    var choice = Console.ReadLine()?.Trim();
+
+    switch (choice)
+    {
+        case "1": ListExpenses(); break;
+        case "2": AddExpense(); break;
+        case "3": RemoveExpense(); break;
+        case "4": ShowReport(); break;
+        case "5": ShowAiFixDemo(); break;
+        case "0" or "q" or "quit" or "exit":
+            Console.WriteLine("Bye! 👋");
+            return;
+        default:
+            Console.WriteLine("Unknown option. Type a number from the menu.");
+            break;
+    }
+}
+
+// --- menu actions ------------------------------------------------------------
+
+void PrintMenu()
+{
+    Console.WriteLine();
+    Console.WriteLine("──────────────────────────────");
+    Console.WriteLine(" 1) List expenses");
+    Console.WriteLine(" 2) Add expense");
+    Console.WriteLine(" 3) Remove expense");
+    Console.WriteLine(" 4) Report (LINQ in action)");
+    Console.WriteLine(" 5) 'Fix the AI code' demo");
+    Console.WriteLine(" 0) Quit");
+    Console.WriteLine("──────────────────────────────");
+}
+
+void ListExpenses()
+{
+    var expenses = store.GetAll();
+    if (expenses.Count == 0)
+    {
+        Console.WriteLine("(no expenses yet)");
+        return;
+    }
+
+    Console.WriteLine();
+    Console.WriteLine($"{"Id",-4}{"Date",-12}{"Category",-15}{"Amount",12}  Description");
+    foreach (var e in expenses.OrderByDescending(e => e.Date))
+    {
+        Console.WriteLine(
+            $"{e.Id,-4}{e.Date,-12:yyyy-MM-dd}{e.Category,-15}{e.Amount.ToString("C", culture),12}  {e.Description}");
+    }
+}
+
+void AddExpense()
+{
+    Console.Write("Description: ");
+    var description = Console.ReadLine();
+    if (string.IsNullOrWhiteSpace(description))
+    {
+        Console.WriteLine("Description is required.");
+        return;
+    }
+
+    Console.Write("Amount: ");
+    // TryParse instead of Parse: never let bad input crash the app.
+    if (!decimal.TryParse(Console.ReadLine(), NumberStyles.Currency, culture, out var amount) || amount <= 0)
+    {
+        Console.WriteLine("Amount must be a positive number.");
+        return;
+    }
+
+    Console.WriteLine($"Category ({string.Join(", ", Enum.GetNames<Category>())}): ");
+    if (!Enum.TryParse<Category>(Console.ReadLine(), ignoreCase: true, out var category))
+    {
+        Console.WriteLine("Unknown category — defaulting to 'Other'.");
+        category = Category.Other;
+    }
+
+    var added = store.Add(description, amount, category, DateOnly.FromDateTime(DateTime.Today));
+    Console.WriteLine($"✅ Added #{added.Id}: {added.Description} {added.Amount.ToString("C", culture)}");
+}
+
+void RemoveExpense()
+{
+    Console.Write("Id to remove: ");
+    if (!int.TryParse(Console.ReadLine(), out var id))
+    {
+        Console.WriteLine("That's not a number.");
+        return;
+    }
+
+    Console.WriteLine(store.Remove(id) ? $"🗑️  Removed #{id}." : $"No expense with id {id}.");
+}
+
+void ShowReport()
+{
+    // This is where the LINQ from ExpenseAnalyzer pays off.
+    var analyzer = new ExpenseAnalyzer(store.GetAll());
+
+    Console.WriteLine();
+    Console.WriteLine("📊 SPENDING REPORT");
+    Console.WriteLine($"Total spent      : {analyzer.Total().ToString("C", culture)}");
+    Console.WriteLine($"Avg / month      : {analyzer.AverageMonthlySpend().ToString("C", culture)}");
+
+    Console.WriteLine();
+    Console.WriteLine("By category:");
+    foreach (var row in analyzer.TotalsByCategory())
+        Console.WriteLine($"  {row.Category,-15}{row.Total.ToString("C", culture),12}");
+
+    Console.WriteLine();
+    Console.WriteLine("Top 3 expenses:");
+    foreach (var e in analyzer.TopExpenses(3))
+        Console.WriteLine($"  {e.Amount.ToString("C", culture),12}  {e.Description}");
+}
+
+void ShowAiFixDemo()
+{
+    // See Services/AiCodeToFix.cs for the full explanation of the bugs.
+    var all = store.GetAll().ToList();
+
+    var buggy = AiCodeToFix.AiGenerated_BiggestExpenseCategory(all);
+    var fixedResult = AiCodeToFix.Fixed_BiggestExpenseCategory(all);
+
+    Console.WriteLine();
+    Console.WriteLine("🧠 'Fix the AI code' demo");
+    Console.WriteLine($"  AI version says the biggest category is : {buggy}");
+    Console.WriteLine($"  Fixed version (by TOTAL spend) says     : {fixedResult}");
+    Console.WriteLine("  Open Services/AiCodeToFix.cs to see WHY they differ.");
+}
+==== 01 - Expense Tracker CLI/src/ExpenseTracker/Services/AiCodeToFix.cs
+using ExpenseTracker.Models;
+
+namespace ExpenseTracker.Services;
+
+/// <summary>
+/// 🧠 LEARNING EXERCISE — "Read &amp; fix AI code".
+///
+/// One of the two Starter skills for this project is reading AI-generated code
+/// critically and fixing it. AI assistants produce code that *looks* correct
+/// and compiles, but hides subtle bugs. Below is a realistic example of what an
+/// assistant might hand you, followed by the corrected version.
+///
+/// Read <see cref="AiGenerated_BiggestExpenseCategory"/> first and try to spot
+/// the bugs yourself BEFORE reading the comments in <see cref="Fixed_BiggestExpenseCategory"/>.
+/// </summary>
+public static class AiCodeToFix
+{
+    // ------------------------------------------------------------------
+    // ❌ AI-GENERATED VERSION (looks fine, has real bugs)
+    //
+    // Prompt that produced something like this:
+    //   "Write a C# method that returns the name of the category the user
+    //    spends the most money on."
+    // ------------------------------------------------------------------
+    public static string AiGenerated_BiggestExpenseCategory(List<Expense> expenses)
+    {
+        // BUG 1: `Max()` here returns the biggest *amount*, not the category.
+        //        The variable name lies about what it holds.
+        // BUG 2: No handling for an empty list — `Max()`/`First()` will throw
+        //        an InvalidOperationException on empty input.
+        // BUG 3: Uses double-style formatting for money and ignores culture.
+        var biggest = expenses.Max(e => e.Amount);
+
+        var category = expenses.First(e => e.Amount == biggest).Category;
+
+        return category.ToString();
+    }
+
+    // ------------------------------------------------------------------
+    // ✅ FIXED VERSION
+    //
+    // What we actually want: the category with the highest *total* spend
+    // (summing all expenses in it), safe on empty input, correctly typed.
+    // ------------------------------------------------------------------
+    public static Category? Fixed_BiggestExpenseCategory(IReadOnlyList<Expense> expenses)
+    {
+        // FIX 2: guard the empty case explicitly and return null (no exception).
+        if (expenses.Count == 0)
+            return null;
+
+        // FIX 1: group by category, SUM each group, then pick the biggest total.
+        //        This answers the real question instead of "single largest receipt".
+        return expenses
+            .GroupBy(e => e.Category)
+            .OrderByDescending(group => group.Sum(e => e.Amount))
+            .Select(group => group.Key)
+            .First();
+    }
+}
+==== 01 - Expense Tracker CLI/src/ExpenseTracker/Services/ExpenseAnalyzer.cs
+using ExpenseTracker.Models;
+
+namespace ExpenseTracker.Services;
+
+/// <summary>
+/// Turns a flat list of expenses into insights — using LINQ.
+///
+/// This class is the whole point of the project: it shows the LINQ operators
+/// you reach for every day — <c>Sum</c>, <c>GroupBy</c>, <c>OrderBy</c>,
+/// <c>Where</c>, <c>Select</c>, <c>Take</c> — applied to a real problem.
+///
+/// LESSON — analysis is a PURE function of the data.
+/// Nothing here mutates state or touches the disk. You give it expenses, you
+/// get numbers back. Pure functions like this are trivial to unit-test and
+/// easy for both humans and AI to reason about.
+/// </summary>
+public sealed class ExpenseAnalyzer
+{
+    private readonly IReadOnlyList<Expense> _expenses;
+
+    public ExpenseAnalyzer(IReadOnlyList<Expense> expenses) => _expenses = expenses;
+
+    /// <summary>Grand total across every expense.</summary>
+    public decimal Total() => _expenses.Sum(e => e.Amount);
+
+    /// <summary>
+    /// Total spent per category, biggest first.
+    /// <c>GroupBy</c> buckets the expenses, then we project each bucket to a
+    /// (category, total) pair and sort. This is the "SELECT ... GROUP BY" of LINQ.
+    /// </summary>
+    public IReadOnlyList<CategoryTotal> TotalsByCategory() =>
+        _expenses
+            .GroupBy(e => e.Category)
+            .Select(group => new CategoryTotal(group.Key, group.Sum(e => e.Amount)))
+            .OrderByDescending(ct => ct.Total)
+            .ToList();
+
+    /// <summary>The <paramref name="count"/> most expensive individual expenses.</summary>
+    public IReadOnlyList<Expense> TopExpenses(int count = 3) =>
+        _expenses
+            .OrderByDescending(e => e.Amount)
+            .Take(count)
+            .ToList();
+
+    /// <summary>
+    /// Average spend per calendar month that actually has expenses.
+    /// (Average of a category with no data would divide by zero — we avoid it
+    /// by only counting months that exist in the data.)
+    /// </summary>
+    public decimal AverageMonthlySpend()
+    {
+        var monthlyTotals = _expenses
+            .GroupBy(e => new { e.Date.Year, e.Date.Month })
+            .Select(group => group.Sum(e => e.Amount))
+            .ToList();
+
+        return monthlyTotals.Count == 0 ? 0m : monthlyTotals.Average();
+    }
+}
+
+/// <summary>Result row for <see cref="ExpenseAnalyzer.TotalsByCategory"/>.</summary>
+public record CategoryTotal(Category Category, decimal Total);
+==== 01 - Expense Tracker CLI/src/ExpenseTracker/Services/ExpenseStore.cs
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using ExpenseTracker.Models;
+
+namespace ExpenseTracker.Services;
+
+/// <summary>
+/// Owns the in-memory list of expenses and persists it to a JSON file.
+///
+/// LESSON — collections + a single source of truth.
+/// The whole app reads and writes through this one store. Nothing else is
+/// allowed to hold its own copy of the list. That keeps state predictable:
+/// there is exactly ONE place where an expense is created, deleted, or saved.
+/// </summary>
+public sealed class ExpenseStore
+{
+    // Encapsulation: the backing list is PRIVATE. Callers get a read-only view
+    // (see GetAll) so nobody can add/remove behind the store's back and skip
+    // the auto-save + id logic.
+    private readonly List<Expense> _expenses = [];
+    private readonly string _filePath;
+
+    // Serializer options are created once and reused (creating them per call is
+    // wasteful). Web defaults give camelCase JSON; the enum converter writes
+    // "Food" instead of the number 0, so the file stays human-readable.
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
+    {
+        WriteIndented = true,
+        Converters = { new JsonStringEnumConverter() }
+    };
+
+    public ExpenseStore(string filePath)
+    {
+        _filePath = filePath;
+        Load();
+    }
+
+    /// <summary>Read-only snapshot — callers can query but not mutate the list.</summary>
+    public IReadOnlyList<Expense> GetAll() => _expenses;
+
+    /// <summary>Adds a new expense, assigns the next id, and saves.</summary>
+    public Expense Add(string description, decimal amount, Category category, DateOnly date)
+    {
+        // Next id = current max + 1. `DefaultIfEmpty(0)` handles the very first
+        // insert (Max on an empty sequence throws — a classic AI-generated bug).
+        var nextId = _expenses.Select(e => e.Id).DefaultIfEmpty(0).Max() + 1;
+
+        var expense = new Expense(nextId, description.Trim(), amount, category, date);
+        _expenses.Add(expense);
+        Save();
+        return expense;
+    }
+
+    /// <summary>Removes an expense by id. Returns true if something was removed.</summary>
+    public bool Remove(int id)
+    {
+        var removed = _expenses.RemoveAll(e => e.Id == id) > 0;
+        if (removed)
+            Save();
+        return removed;
+    }
+
+    // --- persistence -------------------------------------------------------
+
+    private void Load()
+    {
+        if (!File.Exists(_filePath))
+            return;
+
+        var json = File.ReadAllText(_filePath);
+        var loaded = JsonSerializer.Deserialize<List<Expense>>(json, JsonOptions);
+        if (loaded is not null)
+        {
+            _expenses.Clear();
+            _expenses.AddRange(loaded);
+        }
+    }
+
+    private void Save()
+    {
+        var json = JsonSerializer.Serialize(_expenses, JsonOptions);
+        File.WriteAllText(_filePath, json);
+    }
+
+    /// <summary>
+    /// Seeds a few sample expenses so the app has something to show on first run.
+    /// Only runs when the store is empty.
+    /// </summary>
+    public void SeedIfEmpty()
+    {
+        if (_expenses.Count > 0)
+            return;
+
+        var today = DateOnly.FromDateTime(DateTime.Today);
+        Add("Groceries", 54.20m, Category.Food, today.AddDays(-2));
+        Add("Bus pass", 30.00m, Category.Transport, today.AddDays(-10));
+        Add("Rent", 800.00m, Category.Housing, today.AddDays(-15));
+        Add("Cinema tickets", 24.00m, Category.Entertainment, today.AddDays(-5));
+        Add("Pharmacy", 12.75m, Category.Health, today.AddDays(-1));
+        Add("Electricity bill", 65.40m, Category.Utilities, today.AddDays(-8));
+        Add("Restaurant dinner", 48.90m, Category.Food, today.AddDays(-3));
+    }
+}
+==== 02 - To-Do REST API/src/TodoApi/Data/TodoDbContext.cs
+using Microsoft.EntityFrameworkCore;
+using TodoApi.Models;
+
+namespace TodoApi.Data;
+
+/// <summary>
+/// The EF Core <see cref="DbContext"/> — your gateway to the database.
+///
+/// LESSON — a DbContext is a "unit of work".
+/// Each <see cref="DbSet{TEntity}"/> is a table you can query with LINQ. EF Core
+/// translates that LINQ into SQL, tracks the objects you load, and writes your
+/// changes back when you call <see cref="DbContext.SaveChangesAsync"/>.
+///
+/// It's registered in DI (see Program.cs) with a "scoped" lifetime — one context
+/// per HTTP request — which is exactly what you want for a web API.
+/// </summary>
+public class TodoDbContext(DbContextOptions<TodoDbContext> options) : DbContext(options)
+{
+    public DbSet<TodoItem> TodoItems => Set<TodoItem>();
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        // Fluent configuration lives here. For a starter app the conventions are
+        // enough, but this is where you'd add indexes, constraints, etc.
+        modelBuilder.Entity<TodoItem>(entity =>
+        {
+            entity.Property(t => t.Title).IsRequired().HasMaxLength(200);
+        });
+    }
+}
+==== 02 - To-Do REST API/src/TodoApi/Models/TodoItem.cs
+using System.ComponentModel.DataAnnotations;
+
+namespace TodoApi.Models;
+
+/// <summary>
+/// A to-do item — this is our EF Core *entity*. Each instance maps to one row
+/// in the "TodoItems" table.
+///
+/// LESSON — entities vs. DTOs.
+/// This class is shaped for the DATABASE. We deliberately do NOT let clients
+/// send us an `Id` or `CreatedAt` — those are owned by the server. That's why
+/// the API accepts <see cref="CreateTodoRequest"/> / <see cref="UpdateTodoRequest"/>
+/// (small "DTOs") instead of this entity. Mixing the two is a classic AI-code
+/// smell that leads to over-posting bugs (a client setting fields it shouldn't).
+/// </summary>
+public class TodoItem
+{
+    public int Id { get; set; }
+
+    public required string Title { get; set; }
+
+    public bool IsDone { get; set; }
+
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+}
+
+/// <summary>What a client is allowed to send when CREATING a to-do.</summary>
+/// <remarks>Data-annotation attributes drive automatic validation in the endpoint.</remarks>
+public record CreateTodoRequest(
+    [property: Required, MaxLength(200)] string Title);
+
+/// <summary>What a client is allowed to send when UPDATING a to-do.</summary>
+public record UpdateTodoRequest(
+    [property: Required, MaxLength(200)] string Title,
+    bool IsDone);
+==== 02 - To-Do REST API/src/TodoApi/Program.cs
+using Microsoft.EntityFrameworkCore;
+using TodoApi;
+using TodoApi.Data;
+using TodoApi.Models;
+
+// =============================================================================
+// To-Do REST API — Starter project #2
+// Focus: Minimal APIs + EF Core + SQLite.
+//
+// This whole API — DI setup, database, and 5 REST endpoints — lives in one
+// readable file. That's the Minimal API style: no controllers, no ceremony,
+// just the routes and the handlers.
+// =============================================================================
+
+var builder = WebApplication.CreateBuilder(args);
+
+// --- Services (dependency injection) ----------------------------------------
+
+// Register the DbContext. The SQLite database is a single file, "todos.db",
+// created next to the app. Swapping to SQL Server later is a one-line change.
+builder.Services.AddDbContext<TodoDbContext>(options =>
+    options.UseSqlite("Data Source=todos.db"));
+
+var app = builder.Build();
+
+// --- Create the database on startup -----------------------------------------
+
+// EnsureCreated() builds the schema from the model if the file doesn't exist.
+// It's perfect for a demo. For a REAL app you'd use EF Core *migrations*
+// (see the README) so you can evolve the schema safely over time.
+using (var scope = app.Services.CreateScope())
+{
+    var db = scope.ServiceProvider.GetRequiredService<TodoDbContext>();
+    db.Database.EnsureCreated();
+    SeedData.EnsureSeeded(db);
+}
+
+// --- Middleware --------------------------------------------------------------
+
+// --- Endpoints ---------------------------------------------------------------
+// A route group keeps the URL prefix ("/todos") in one place and lets us tag
+// everything for OpenAPI at once.
+var todos = app.MapGroup("/todos").WithTags("Todos");
+
+// GET /todos  ->  list all (newest first)
+// NOTE: we order by Id (which auto-increments, so higher = newer) instead of
+// CreatedAt. SQLite can't ORDER BY a DateTimeOffset in SQL — a real provider
+// quirk worth knowing. Ordering by the key sidesteps it and is just as correct here.
+todos.MapGet("/", async (TodoDbContext db) =>
+    await db.TodoItems
+            .OrderByDescending(t => t.Id)
+            .ToListAsync());
+
+// GET /todos/{id}  ->  one item, or 404
+todos.MapGet("/{id:int}", async (int id, TodoDbContext db) =>
+    await db.TodoItems.FindAsync(id) is { } todo
+        ? Results.Ok(todo)
+        : Results.NotFound());
+
+// POST /todos  ->  create. Returns 201 + Location header pointing at the new item.
+todos.MapPost("/", async (CreateTodoRequest request, TodoDbContext db) =>
+{
+    // Validate the incoming DTO at the boundary; bail out with 400 if invalid.
+    if (RequestValidator.Validate(request) is { } validationError)
+        return validationError;
+
+    // Map the DTO to the entity ourselves — the client never sets Id/CreatedAt.
+    var todo = new TodoItem { Title = request.Title };
+
+    db.TodoItems.Add(todo);
+    await db.SaveChangesAsync();
+
+    return Results.Created($"/todos/{todo.Id}", todo);
+});
+
+// PUT /todos/{id}  ->  update title + done state
+todos.MapPut("/{id:int}", async (int id, UpdateTodoRequest request, TodoDbContext db) =>
+{
+    if (RequestValidator.Validate(request) is { } validationError)
+        return validationError;
+
+    var todo = await db.TodoItems.FindAsync(id);
+    if (todo is null)
+        return Results.NotFound();
+
+    todo.Title = request.Title;
+    todo.IsDone = request.IsDone;
+    await db.SaveChangesAsync();
+
+    return Results.NoContent();
+});
+
+// DELETE /todos/{id}
+todos.MapDelete("/{id:int}", async (int id, TodoDbContext db) =>
+{
+    var todo = await db.TodoItems.FindAsync(id);
+    if (todo is null)
+        return Results.NotFound();
+
+    db.TodoItems.Remove(todo);
+    await db.SaveChangesAsync();
+
+    return Results.NoContent();
+});
+
+// Root redirects to the list endpoint so opening the site shows something useful.
+app.MapGet("/", () => Results.Redirect("/todos"));
+
+app.Run();
+==== 02 - To-Do REST API/src/TodoApi/RequestValidator.cs
+using System.ComponentModel.DataAnnotations;
+
+namespace TodoApi;
+
+/// <summary>
+/// A tiny validation helper built entirely on the framework's own
+/// <see cref="Validator"/> — no extra NuGet packages.
+///
+/// LESSON — validate at the boundary.
+/// The only place untrusted data enters the app is the request body. We check
+/// it there, once, and return a clean 400 with the reasons. Everything past this
+/// point can then trust the data. (See OWASP: never trust client input.)
+/// </summary>
+public static class RequestValidator
+{
+    /// <summary>
+    /// Validates an object against its DataAnnotation attributes.
+    /// Returns a minimal-API <see cref="IResult"/> (400 with errors) when invalid,
+    /// or <c>null</c> when the object is valid.
+    /// </summary>
+    public static IResult? Validate(object model)
+    {
+        var context = new ValidationContext(model);
+        var results = new List<ValidationResult>();
+
+        if (Validator.TryValidateObject(model, context, results, validateAllProperties: true))
+            return null; // valid
+
+        // Shape the errors like ASP.NET Core's ValidationProblem output.
+        var errors = results
+            .SelectMany(r => r.MemberNames.DefaultIfEmpty(string.Empty),
+                        (r, member) => (Member: member, r.ErrorMessage))
+            .GroupBy(x => x.Member)
+            .ToDictionary(
+                g => g.Key,
+                g => g.Select(x => x.ErrorMessage ?? "Invalid").ToArray());
+
+        return Results.ValidationProblem(errors);
+    }
+}
+==== 02 - To-Do REST API/src/TodoApi/SeedData.cs
+using TodoApi.Data;
+using TodoApi.Models;
+
+namespace TodoApi;
+
+/// <summary>Adds a couple of sample to-dos on first run so the API isn't empty.</summary>
+public static class SeedData
+{
+    public static void EnsureSeeded(TodoDbContext db)
+    {
+        if (db.TodoItems.Any())
+            return;
+
+        db.TodoItems.AddRange(
+            new TodoItem { Title = "Read the AI-in-.NET roadmap", IsDone = true },
+            new TodoItem { Title = "Build the To-Do API", IsDone = false },
+            new TodoItem { Title = "Try the prompts in the README", IsDone = false });
+
+        db.SaveChanges();
+    }
+}
+==== 02 - To-Do REST API/src/TodoApi/TodoApi.csproj
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- EF Core with the SQLite provider: a real relational database in a single
+         file, zero server to install. Perfect for learning EF Core. -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.0" />
+    <!-- Explicitly pin the native SQLite bundle to a patched version. EF Core 10
+         pulls in an older transitive build that NuGet flags for a known CVE;
+         referencing the newer bundle directly overrides it. Security > silence. -->
+    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.5" />
+  </ItemGroup>
+
+</Project>
+==== 03 - Weather Dashboard/src/WeatherDashboard/Models/WeatherCodes.cs
+namespace WeatherDashboard.Models;
+
+/// <summary>
+/// Translates WMO weather codes (what the API returns) into human text + an emoji.
+/// See https://open-meteo.com/en/docs for the full table.
+/// </summary>
+public static class WeatherCodes
+{
+    public static string Describe(int code) => code switch
+    {
+        0 => "Clear sky ☀️",
+        1 or 2 or 3 => "Partly cloudy ⛅",
+        45 or 48 => "Fog 🌫️",
+        51 or 53 or 55 => "Drizzle 🌦️",
+        61 or 63 or 65 => "Rain 🌧️",
+        66 or 67 => "Freezing rain 🌧️❄️",
+        71 or 73 or 75 => "Snow 🌨️",
+        77 => "Snow grains 🌨️",
+        80 or 81 or 82 => "Rain showers 🌧️",
+        85 or 86 => "Snow showers 🌨️",
+        95 => "Thunderstorm ⛈️",
+        96 or 99 => "Thunderstorm with hail ⛈️",
+        _ => $"Unknown (code {code})"
+    };
+}
+==== 03 - Weather Dashboard/src/WeatherDashboard/Models/WeatherModels.cs
+using System.Text.Json.Serialization;
+
+namespace WeatherDashboard.Models;
+
+// =============================================================================
+// These records mirror the JSON returned by the Open-Meteo APIs.
+//
+// LESSON — map JSON explicitly.
+// The API uses snake_case names like "temperature_2m". We use [JsonPropertyName]
+// so our C# stays idiomatic (PascalCase) while still binding correctly. Records
+// give us immutable, read-only data holders in a single line each.
+// =============================================================================
+
+/// <summary>Response from the geocoding API (city name -> coordinates).</summary>
+public record GeocodingResponse(
+    [property: JsonPropertyName("results")] GeoResult[]? Results);
+
+/// <summary>A single matched place.</summary>
+public record GeoResult(
+    [property: JsonPropertyName("name")] string Name,
+    [property: JsonPropertyName("latitude")] double Latitude,
+    [property: JsonPropertyName("longitude")] double Longitude,
+    [property: JsonPropertyName("country")] string? Country,
+    [property: JsonPropertyName("admin1")] string? Admin1);
+
+/// <summary>Response from the forecast API — we only ask for the "current" block.</summary>
+public record ForecastResponse(
+    [property: JsonPropertyName("current")] CurrentWeather Current);
+
+/// <summary>The current conditions.</summary>
+public record CurrentWeather(
+    [property: JsonPropertyName("time")] string Time,
+    [property: JsonPropertyName("temperature_2m")] double Temperature,
+    [property: JsonPropertyName("relative_humidity_2m")] int Humidity,
+    [property: JsonPropertyName("wind_speed_10m")] double WindSpeed,
+    [property: JsonPropertyName("weather_code")] int WeatherCode);
+==== 03 - Weather Dashboard/src/WeatherDashboard/Program.cs
+using WeatherDashboard.Models;
+using WeatherDashboard.Services;
+
+// =============================================================================
+// Weather Dashboard — Starter project #3
+// Focus: HttpClient + async / await.
+//
+// Flow:  city name  --geocode-->  coordinates  --forecast-->  current weather
+// Data source: Open-Meteo (https://open-meteo.com) — free, no API key.
+//
+// Note the `await Main` style: the entry point is async, so I/O never blocks a
+// thread. We create ONE HttpClient and reuse it for every call.
+// =============================================================================
+
+// You can pass a city as an argument:  dotnet run -- "Novi Sad"
+// Otherwise we prompt for one (falling back to Belgrade).
+var city = args.Length > 0
+    ? string.Join(' ', args)
+    : AskForCity();
+
+// One HttpClient for the whole program. `using` disposes it on exit.
+// Timeout is a safety net; we ALSO pass a CancellationToken per call below.
+using var http = new HttpClient
+{
+    Timeout = TimeSpan.FromSeconds(15)
+};
+var weather = new WeatherClient(http);
+
+// A CancellationToken that trips after 10s so a hung network call can't freeze us.
+using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
+try
+{
+    Console.WriteLine($"🔎 Looking up '{city}'...");
+
+    var place = await weather.GeocodeAsync(city, cts.Token);
+    if (place is null)
+    {
+        Console.WriteLine($"❌ Couldn't find a place called '{city}'. Try another spelling.");
+        return 1;
+    }
+
+    Console.WriteLine($"📍 {place.Name}, {place.Admin1}, {place.Country} " +
+                      $"({place.Latitude:0.00}, {place.Longitude:0.00})");
+    Console.WriteLine("🌐 Fetching current weather...");
+
+    var current = await weather.GetCurrentWeatherAsync(place.Latitude, place.Longitude, cts.Token);
+
+    PrintWeather(place, current);
+    return 0;
+}
+// LESSON — handle the failure modes explicitly. Networks fail; good code expects it.
+catch (OperationCanceledException)
+{
+    Console.WriteLine("⏱️  The request timed out. Check your connection and try again.");
+    return 2;
+}
+catch (HttpRequestException ex)
+{
+    Console.WriteLine($"🌐 Network error: {ex.Message}");
+    return 3;
+}
+
+// --- helpers -----------------------------------------------------------------
+
+static string AskForCity()
+{
+    Console.Write("Enter a city (default: Belgrade): ");
+    var input = Console.ReadLine();
+    return string.IsNullOrWhiteSpace(input) ? "Belgrade" : input.Trim();
+}
+
+static void PrintWeather(GeoResult place, CurrentWeather w)
+{
+    Console.WriteLine();
+    Console.WriteLine("┌───────────────────────────────────┐");
+    Console.WriteLine($"│ Weather in {place.Name,-22} │");
+    Console.WriteLine("├───────────────────────────────────┤");
+    Console.WriteLine($"│ {WeatherCodes.Describe(w.WeatherCode),-33} │");
+    Console.WriteLine($"│ 🌡️  Temperature : {w.Temperature,6:0.0} °C        │");
+    Console.WriteLine($"│ 💧 Humidity    : {w.Humidity,6} %         │");
+    Console.WriteLine($"│ 💨 Wind        : {w.WindSpeed,6:0.0} km/h      │");
+    Console.WriteLine("└───────────────────────────────────┘");
+    Console.WriteLine($"(observed at {w.Time})");
+}
+==== 03 - Weather Dashboard/src/WeatherDashboard/Services/WeatherClient.cs
+using System.Globalization;
+using System.Net.Http.Json;
+using WeatherDashboard.Models;
+
+namespace WeatherDashboard.Services;
+
+/// <summary>
+/// A "typed client" that wraps <see cref="HttpClient"/> and talks to Open-Meteo.
+///
+/// LESSON — how to use HttpClient correctly.
+/// * We take an <see cref="HttpClient"/> via the constructor and REUSE it. We do
+///   NOT `new HttpClient()` per request — doing that exhausts OS sockets under
+///   load (the single most common HttpClient bug). In a real app you'd register
+///   this as a typed client with <c>IHttpClientFactory</c>.
+/// * Every network method is <c>async</c> and takes a <see cref="CancellationToken"/>
+///   so calls can time out or be cancelled — never block a thread on I/O.
+/// * <c>GetFromJsonAsync</c> streams the response straight into our records.
+/// </summary>
+public sealed class WeatherClient
+{
+    private readonly HttpClient _http;
+
+    public WeatherClient(HttpClient http) => _http = http;
+
+    /// <summary>Turns a city name into coordinates. Returns null if not found.</summary>
+    public async Task<GeoResult?> GeocodeAsync(string city, CancellationToken ct = default)
+    {
+        // Uri.EscapeDataString protects against odd characters/spaces in input.
+        var url = $"https://geocoding-api.open-meteo.com/v1/search?name={Uri.EscapeDataString(city)}&count=1&language=en&format=json";
+
+        var response = await _http.GetFromJsonAsync<GeocodingResponse>(url, ct);
+
+        // The API returns an object with a possibly-empty/absent results array.
+        return response?.Results is { Length: > 0 } results ? results[0] : null;
+    }
+
+    /// <summary>Fetches the current conditions for a coordinate pair.</summary>
+    public async Task<CurrentWeather> GetCurrentWeatherAsync(double latitude, double longitude, CancellationToken ct = default)
+    {
+        // InvariantCulture so the decimal point is always '.', regardless of the
+        // machine's locale — a subtle bug when building URLs with numbers.
+        var lat = latitude.ToString(CultureInfo.InvariantCulture);
+        var lon = longitude.ToString(CultureInfo.InvariantCulture);
+
+        var url = $"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}" +
+                  "&current=temperature_2m,relative_humidity_2m,wind_speed_10m,weather_code";
+
+        var forecast = await _http.GetFromJsonAsync<ForecastResponse>(url, ct)
+            ?? throw new InvalidOperationException("The forecast API returned no data.");
+
+        return forecast.Current;
+    }
+}
+==== 03 - Weather Dashboard/src/WeatherDashboard/WeatherDashboard.csproj
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <!-- No NuGet packages needed: HttpClient, System.Net.Http.Json and
+       System.Text.Json all ship with the .NET runtime. -->
+
+</Project>
+==== 04 - URL Shortener/src/UrlShortener/Data/UrlShortenerDbContext.cs
+using Microsoft.EntityFrameworkCore;
+using UrlShortener.Models;
+
+namespace UrlShortener.Data;
+
+/// <summary>EF Core context holding the short-URL table.</summary>
+public class UrlShortenerDbContext(DbContextOptions<UrlShortenerDbContext> options)
+    : DbContext(options)
+{
+    public DbSet<ShortUrl> ShortUrls => Set<ShortUrl>();
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<ShortUrl>(entity =>
+        {
+            entity.Property(s => s.Code).IsRequired().HasMaxLength(16);
+            entity.Property(s => s.OriginalUrl).IsRequired().HasMaxLength(2048);
+
+            // Unique index: fast lookups by code AND a guarantee no two rows
+            // share a code, even under a race between two inserts.
+            entity.HasIndex(s => s.Code).IsUnique();
+        });
+    }
+}
+==== 04 - URL Shortener/src/UrlShortener/Models/ShortUrl.cs
+using System.ComponentModel.DataAnnotations;
+
+namespace UrlShortener.Models;
+
+/// <summary>
+/// One shortened link — the EF Core entity (one row in "ShortUrls").
+///
+/// LESSON — index the column you look up by.
+/// Every redirect searches by <see cref="Code"/>, so it gets a UNIQUE index
+/// (configured in the DbContext). Without it, each lookup is a full table scan.
+/// </summary>
+public class ShortUrl
+{
+    public int Id { get; set; }
+
+    /// <summary>The short code, e.g. "aB3xK9q". Unique.</summary>
+    public required string Code { get; set; }
+
+    /// <summary>The full destination we redirect to.</summary>
+    public required string OriginalUrl { get; set; }
+
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+
+    /// <summary>How many times the short link has been followed.</summary>
+    public long Hits { get; set; }
+}
+
+/// <summary>What a client sends to create a short link.</summary>
+public record ShortenRequest(
+    [property: Required, Url, MaxLength(2048)] string Url);
+==== 04 - URL Shortener/src/UrlShortener/Program.cs
+using System.Threading.RateLimiting;
+using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.EntityFrameworkCore;
+using UrlShortener;
+using UrlShortener.Data;
+using UrlShortener.Models;
+using UrlShortener.Services;
+
+// =============================================================================
+// URL Shortener — Intermediate project #4
+// Focus: Caching + Rate limiting.
+//
+//   POST /shorten   { "url": "https://..." }  -> creates a short code (rate limited)
+//   GET  /{code}                              -> 302 redirect (served from cache)
+//   GET  /api/stats/{code}                    -> hit counter + metadata
+// =============================================================================
+
+var builder = WebApplication.CreateBuilder(args);
+
+// --- Services ----------------------------------------------------------------
+
+builder.Services.AddDbContext<UrlShortenerDbContext>(o =>
+    o.UseSqlite("Data Source=urls.db"));
+
+// In-memory cache that UrlShortenerService uses for the hot redirect path.
+builder.Services.AddMemoryCache();
+
+builder.Services.AddScoped<UrlShortenerService>();
+
+// --- Rate limiting -----------------------------------------------------------
+// LESSON — protect write endpoints from abuse.
+// Creating links is cheap to spam. We add a per-IP fixed-window limiter: at most
+// 5 "shorten" calls every 10 seconds. Over the limit -> HTTP 429. Redirects are
+// intentionally NOT limited so real traffic keeps flowing.
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+
+    options.AddPolicy("shorten", httpContext =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            // Partition by client IP so one abuser can't starve everyone else.
+            partitionKey: httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 5,
+                Window = TimeSpan.FromSeconds(10)
+            }));
+});
+
+var app = builder.Build();
+
+// Create + seed the database.
+using (var scope = app.Services.CreateScope())
+{
+    var db = scope.ServiceProvider.GetRequiredService<UrlShortenerDbContext>();
+    db.Database.EnsureCreated();
+}
+
+app.UseRateLimiter();
+
+// --- Endpoints ---------------------------------------------------------------
+
+// Create a short link. The .RequireRateLimiting("shorten") wires up the limiter.
+app.MapPost("/shorten", async (ShortenRequest request, UrlShortenerService service, HttpRequest http, CancellationToken ct) =>
+{
+    if (RequestValidator.Validate(request) is { } validationError)
+        return validationError;
+
+    try
+    {
+        var created = await service.CreateAsync(request.Url, ct);
+        var shortUrl = $"{http.Scheme}://{http.Host}/{created.Code}";
+
+        return Results.Created(shortUrl, new
+        {
+            code = created.Code,
+            shortUrl,
+            originalUrl = created.OriginalUrl
+        });
+    }
+    catch (ArgumentException ex)
+    {
+        // Thrown by the service for non-http(s) URLs — a clean 400.
+        return Results.BadRequest(new { error = ex.Message });
+    }
+})
+.RequireRateLimiting("shorten");
+
+// Follow a short link. Cache-first resolve, then a 302 redirect.
+app.MapGet("/{code}", async (string code, UrlShortenerService service, CancellationToken ct) =>
+{
+    var target = await service.ResolveAsync(code, ct);
+    if (target is null)
+        return Results.NotFound($"No short link '{code}'.");
+
+    // Fire-and-forget-ish: record the hit but don't make the user wait on it.
+    await service.RecordHitAsync(code, ct);
+
+    return Results.Redirect(target);
+});
+
+// Stats for a code.
+app.MapGet("/api/stats/{code}", async (string code, UrlShortenerService service, CancellationToken ct) =>
+{
+    var entity = await service.GetAsync(code, ct);
+    return entity is null
+        ? Results.NotFound()
+        : Results.Ok(new { entity.Code, entity.OriginalUrl, entity.Hits, entity.CreatedAt });
+});
+
+app.MapGet("/", () => Results.Ok(new
+{
+    service = "URL Shortener",
+    usage = new
+    {
+        create = "POST /shorten { \"url\": \"https://example.com\" }",
+        follow = "GET /{code}",
+        stats = "GET /api/stats/{code}"
+    }
+}));
+
+app.Run();
+==== 04 - URL Shortener/src/UrlShortener/RequestValidator.cs
+using System.ComponentModel.DataAnnotations;
+
+namespace UrlShortener;
+
+/// <summary>
+/// Boundary validation using the framework's own <see cref="Validator"/> — no
+/// extra packages. Returns a 400 <see cref="IResult"/> when invalid, else null.
+/// </summary>
+public static class RequestValidator
+{
+    public static IResult? Validate(object model)
+    {
+        var context = new ValidationContext(model);
+        var results = new List<ValidationResult>();
+
+        if (Validator.TryValidateObject(model, context, results, validateAllProperties: true))
+            return null;
+
+        var errors = results
+            .SelectMany(r => r.MemberNames.DefaultIfEmpty(string.Empty),
+                        (r, member) => (Member: member, r.ErrorMessage))
+            .GroupBy(x => x.Member)
+            .ToDictionary(g => g.Key, g => g.Select(x => x.ErrorMessage ?? "Invalid").ToArray());
+
+        return Results.ValidationProblem(errors);
+    }
+}
+==== 04 - URL Shortener/src/UrlShortener/Services/ShortCodeGenerator.cs
+using System.Security.Cryptography;
+
+namespace UrlShortener.Services;
+
+/// <summary>
+/// Generates short, URL-safe codes like "aB3xK9q".
+///
+/// LESSON — use a cryptographic RNG for identifiers.
+/// <see cref="RandomNumberGenerator"/> gives unpredictable codes, so nobody can
+/// guess the next one and enumerate everyone's links. <see cref="System.Random"/>
+/// would be faster but predictable — the wrong trade-off for anything public.
+/// </summary>
+public static class ShortCodeGenerator
+{
+    // Base62 alphabet: 0-9, a-z, A-Z. No ambiguous punctuation, URL-safe.
+    private const string Alphabet = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+
+    public static string Generate(int length = 7)
+    {
+        var chars = new char[length];
+        for (var i = 0; i < length; i++)
+        {
+            // RandomNumberGenerator.GetInt32 is unbiased over the range.
+            chars[i] = Alphabet[RandomNumberGenerator.GetInt32(Alphabet.Length)];
+        }
+
+        return new string(chars);
+    }
+}
+==== 04 - URL Shortener/src/UrlShortener/Services/UrlShortenerService.cs
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Memory;
+using UrlShortener.Data;
+using UrlShortener.Models;
+
+namespace UrlShortener.Services;
+
+/// <summary>
+/// The core service: create short links and resolve them back to the original URL.
+///
+/// LESSON — cache the hot read path.
+/// A redirect happens far more often than a "create". Hitting the database on
+/// every single redirect is wasteful, so we put a small <see cref="IMemoryCache"/>
+/// in front: resolve once from the DB, then serve subsequent hits from memory.
+/// This is the classic "cache-aside" pattern.
+/// </summary>
+public sealed class UrlShortenerService(
+    UrlShortenerDbContext db,
+    IMemoryCache cache)
+{
+    private static readonly TimeSpan CacheDuration = TimeSpan.FromMinutes(10);
+
+    /// <summary>
+    /// Creates a short link. Rejects anything that isn't an absolute http/https URL
+    /// (an <c>Uri</c> guard that also blocks <c>javascript:</c> and other schemes).
+    /// </summary>
+    public async Task<ShortUrl> CreateAsync(string originalUrl, CancellationToken ct = default)
+    {
+        if (!IsSafeHttpUrl(originalUrl))
+            throw new ArgumentException("Only absolute http/https URLs are allowed.", nameof(originalUrl));
+
+        // Retry a few times in the (very unlikely) event of a code collision.
+        for (var attempt = 0; attempt < 5; attempt++)
+        {
+            var code = ShortCodeGenerator.Generate();
+
+            var exists = await db.ShortUrls.AnyAsync(s => s.Code == code, ct);
+            if (exists)
+                continue;
+
+            var shortUrl = new ShortUrl { Code = code, OriginalUrl = originalUrl };
+            db.ShortUrls.Add(shortUrl);
+            await db.SaveChangesAsync(ct);
+
+            return shortUrl;
+        }
+
+        throw new InvalidOperationException("Could not generate a unique code. Try again.");
+    }
+
+    /// <summary>
+    /// Resolves a code to its original URL, using the cache first.
+    /// Returns null if the code doesn't exist.
+    /// </summary>
+    public async Task<string?> ResolveAsync(string code, CancellationToken ct = default)
+    {
+        // 1) Fast path: already in memory?
+        if (cache.TryGetValue(CacheKey(code), out string? cached))
+            return cached;
+
+        // 2) Slow path: read from the database...
+        var entity = await db.ShortUrls.FirstOrDefaultAsync(s => s.Code == code, ct);
+        if (entity is null)
+            return null;
+
+        // ...and store it for next time.
+        cache.Set(CacheKey(code), entity.OriginalUrl, CacheDuration);
+        return entity.OriginalUrl;
+    }
+
+    /// <summary>
+    /// Increments the hit counter. Kept separate from resolve so the cached
+    /// redirect stays fast — stats can tolerate a direct DB update.
+    /// </summary>
+    public Task RecordHitAsync(string code, CancellationToken ct = default) =>
+        db.ShortUrls
+          .Where(s => s.Code == code)
+          .ExecuteUpdateAsync(s => s.SetProperty(x => x.Hits, x => x.Hits + 1), ct);
+
+    public Task<ShortUrl?> GetAsync(string code, CancellationToken ct = default) =>
+        db.ShortUrls.AsNoTracking().FirstOrDefaultAsync(s => s.Code == code, ct);
+
+    private static string CacheKey(string code) => $"shorturl:{code}";
+
+    private static bool IsSafeHttpUrl(string url) =>
+        Uri.TryCreate(url, UriKind.Absolute, out var uri) &&
+        (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);
+}
+==== 04 - URL Shortener/src/UrlShortener/UrlShortener.csproj
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Single-file relational DB for the short-code -> URL mappings. -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.0" />
+    <!-- Pin the patched native SQLite bundle (EF Core's transitive one has a CVE). -->
+    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.5" />
+  </ItemGroup>
+
+  <!-- Rate limiting (Microsoft.AspNetCore.RateLimiting) and in-memory caching
+       (Microsoft.Extensions.Caching.Memory) both ship with the web framework. -->
+
+</Project>
+==== 05 - Blog API with Auth/src/BlogApi/Auth/JwtTokenService.cs
+using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
+using System.Text;
+using BlogApi.Models;
+using Microsoft.IdentityModel.Tokens;
+
+namespace BlogApi.Auth;
+
+/// <summary>Strongly-typed JWT settings bound from the "Jwt" config section.</summary>
+public sealed class JwtOptions
+{
+    public string Key { get; set; } = "";
+    public string Issuer { get; set; } = "BlogApi";
+    public string Audience { get; set; } = "BlogApi";
+    public int ExpiryMinutes { get; set; } = 60;
+}
+
+/// <summary>
+/// Issues signed JWT access tokens.
+///
+/// LESSON — a JWT is signed, not encrypted.
+/// Anyone can READ the claims inside a JWT (it's just Base64). The signature only
+/// proves it hasn't been TAMPERED with and that WE issued it. So: never put
+/// secrets in a token, and always validate the signature on the way back in
+/// (configured in Program.cs).
+/// </summary>
+public sealed class JwtTokenService(JwtOptions options)
+{
+    public string CreateToken(User user)
+    {
+        // Claims describe WHO the caller is. "sub" = subject (the user id).
+        var claims = new[]
+        {
+            new Claim(JwtRegisteredClaimNames.Sub, user.Id.ToString()),
+            new Claim(JwtRegisteredClaimNames.UniqueName, user.Username),
+            new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
+        };
+
+        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(options.Key));
+        var credentials = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
+
+        var token = new JwtSecurityToken(
+            issuer: options.Issuer,
+            audience: options.Audience,
+            claims: claims,
+            expires: DateTime.UtcNow.AddMinutes(options.ExpiryMinutes),
+            signingCredentials: credentials);
+
+        return new JwtSecurityTokenHandler().WriteToken(token);
+    }
+}
+==== 05 - Blog API with Auth/src/BlogApi/Auth/PasswordHasher.cs
+using System.Security.Cryptography;
+
+namespace BlogApi.Auth;
+
+/// <summary>
+/// Hashes and verifies passwords with PBKDF2 — no external dependencies.
+///
+/// LESSON — never store passwords, store slow salted hashes.
+/// * A per-user random <b>salt</b> means two users with the same password get
+///   different hashes (defeats rainbow tables).
+/// * A high <b>iteration count</b> makes each guess expensive, slowing brute force.
+/// * Verification uses a <b>fixed-time</b> comparison to avoid timing attacks.
+///
+/// (In a full app you'd typically use ASP.NET Core Identity's <c>PasswordHasher</c>,
+/// which does all this for you. We hand-roll it here to make the mechanics visible.)
+/// </summary>
+public static class PasswordHasher
+{
+    private const int SaltSize = 16;      // 128-bit salt
+    private const int KeySize = 32;       // 256-bit derived key
+    private const int Iterations = 100_000;
+    private static readonly HashAlgorithmName Algorithm = HashAlgorithmName.SHA256;
+
+    /// <summary>Produces a self-describing hash string: "iterations.salt.key" (Base64).</summary>
+    public static string Hash(string password)
+    {
+        var salt = RandomNumberGenerator.GetBytes(SaltSize);
+        var key = Rfc2898DeriveBytes.Pbkdf2(password, salt, Iterations, Algorithm, KeySize);
+
+        return $"{Iterations}.{Convert.ToBase64String(salt)}.{Convert.ToBase64String(key)}";
+    }
+
+    /// <summary>Re-derives the key from the candidate password and compares in fixed time.</summary>
+    public static bool Verify(string password, string stored)
+    {
+        var parts = stored.Split('.', 3);
+        if (parts.Length != 3 || !int.TryParse(parts[0], out var iterations))
+            return false;
+
+        var salt = Convert.FromBase64String(parts[1]);
+        var expectedKey = Convert.FromBase64String(parts[2]);
+
+        var actualKey = Rfc2898DeriveBytes.Pbkdf2(password, salt, iterations, Algorithm, expectedKey.Length);
+
+        // CryptographicOperations.FixedTimeEquals prevents leaking info via timing.
+        return CryptographicOperations.FixedTimeEquals(actualKey, expectedKey);
+    }
+}
+==== 05 - Blog API with Auth/src/BlogApi/BlogApi.csproj
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.0" />
+    <!-- Pin the patched native SQLite bundle (EF Core's transitive one has a CVE). -->
+    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.5" />
+    <!-- Validates and issues JWT bearer tokens. -->
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.0" />
+  </ItemGroup>
+
+</Project>
+==== 05 - Blog API with Auth/src/BlogApi/Data/BlogDbContext.cs
+using Microsoft.EntityFrameworkCore;
+using BlogApi.Models;
+
+namespace BlogApi.Data;
+
+/// <summary>EF Core context for users and posts.</summary>
+public class BlogDbContext(DbContextOptions<BlogDbContext> options) : DbContext(options)
+{
+    public DbSet<User> Users => Set<User>();
+    public DbSet<BlogPost> Posts => Set<BlogPost>();
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<User>(entity =>
+        {
+            entity.Property(u => u.Username).IsRequired().HasMaxLength(50);
+            // Usernames must be unique — enforced at the database level, not just in code.
+            entity.HasIndex(u => u.Username).IsUnique();
+        });
+
+        modelBuilder.Entity<BlogPost>(entity =>
+        {
+            entity.Property(p => p.Title).IsRequired().HasMaxLength(200);
+            entity.HasOne(p => p.Author)
+                  .WithMany(u => u.Posts)
+                  .HasForeignKey(p => p.AuthorId)
+                  .OnDelete(DeleteBehavior.Cascade);
+        });
+    }
+}
+==== 05 - Blog API with Auth/src/BlogApi/Models/Entities.cs
+using System.ComponentModel.DataAnnotations;
+
+namespace BlogApi.Models;
+
+/// <summary>An application user. We store only a password HASH, never the password.</summary>
+public class User
+{
+    public int Id { get; set; }
+    public required string Username { get; set; }
+
+    /// <summary>PBKDF2 hash (salt + derived key), produced by <c>PasswordHasher</c>.</summary>
+    public required string PasswordHash { get; set; }
+
+    public ICollection<BlogPost> Posts { get; set; } = [];
+}
+
+/// <summary>A blog post, owned by the <see cref="User"/> who created it.</summary>
+public class BlogPost
+{
+    public int Id { get; set; }
+    public required string Title { get; set; }
+    public required string Content { get; set; }
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+
+    // Foreign key back to the author. Only the author may edit/delete their post.
+    public int AuthorId { get; set; }
+    public User? Author { get; set; }
+}
+
+// --- DTOs: the ONLY shapes a client is allowed to send ----------------------
+
+public record RegisterRequest(
+    [property: Required, MinLength(3), MaxLength(50)] string Username,
+    [property: Required, MinLength(8), MaxLength(100)] string Password);
+
+public record LoginRequest(
+    [property: Required] string Username,
+    [property: Required] string Password);
+
+public record CreatePostRequest(
+    [property: Required, MaxLength(200)] string Title,
+    [property: Required, MinLength(1)] string Content);
+
+public record UpdatePostRequest(
+    [property: Required, MaxLength(200)] string Title,
+    [property: Required, MinLength(1)] string Content);
+==== 05 - Blog API with Auth/src/BlogApi/Program.cs
+using System.Security.Claims;
+using System.Text;
+using BlogApi;
+using BlogApi.Auth;
+using BlogApi.Data;
+using BlogApi.Models;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.IdentityModel.JsonWebTokens;
+using Microsoft.IdentityModel.Tokens;
+
+// =============================================================================
+// Blog API with Auth — Intermediate project #5
+// Focus: JWT authentication, input validation, and integration tests.
+//
+//   POST /auth/register     create an account
+//   POST /auth/login        get a JWT
+//   GET  /posts             list (public)
+//   POST /posts             create (auth required)
+//   PUT  /posts/{id}        update (author only)
+//   DELETE /posts/{id}      delete (author only)
+// =============================================================================
+
+var builder = WebApplication.CreateBuilder(args);
+
+builder.Services.AddDbContext<BlogDbContext>(o => o.UseSqlite("Data Source=blog.db"));
+
+// --- JWT configuration -------------------------------------------------------
+// Bind the "Jwt" section, with a DEV-ONLY fallback key so the sample runs out of
+// the box. NEVER ship a hard-coded key: in production set Jwt:Key via user-secrets,
+// environment variables, or a secret store. HmacSha256 needs a >= 32-byte key.
+var jwt = new JwtOptions();
+builder.Configuration.GetSection("Jwt").Bind(jwt);
+if (string.IsNullOrWhiteSpace(jwt.Key))
+    jwt.Key = "dev-only-super-secret-key-change-me-please-32b";
+
+builder.Services.AddSingleton(jwt);
+builder.Services.AddSingleton<JwtTokenService>();
+
+builder.Services
+    .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer(options =>
+    {
+        // Keep original claim names ("sub" stays "sub" instead of being remapped).
+        options.MapInboundClaims = false;
+
+        options.TokenValidationParameters = new TokenValidationParameters
+        {
+            ValidateIssuer = true,
+            ValidateAudience = true,
+            ValidateLifetime = true,
+            ValidateIssuerSigningKey = true,   // the important one: verify our signature
+            ValidIssuer = jwt.Issuer,
+            ValidAudience = jwt.Audience,
+            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwt.Key)),
+            ClockSkew = TimeSpan.FromSeconds(30)
+        };
+    });
+
+builder.Services.AddAuthorization();
+
+var app = builder.Build();
+
+using (var scope = app.Services.CreateScope())
+{
+    scope.ServiceProvider.GetRequiredService<BlogDbContext>().Database.EnsureCreated();
+}
+
+app.UseAuthentication();
+app.UseAuthorization();
+
+// --- Auth endpoints ----------------------------------------------------------
+
+app.MapPost("/auth/register", async (RegisterRequest request, BlogDbContext db) =>
+{
+    if (RequestValidator.Validate(request) is { } error)
+        return error;
+
+    if (await db.Users.AnyAsync(u => u.Username == request.Username))
+        return Results.Conflict(new { error = "Username is already taken." });
+
+    var user = new User
+    {
+        Username = request.Username,
+        PasswordHash = PasswordHasher.Hash(request.Password) // never store the raw password
+    };
+    db.Users.Add(user);
+    await db.SaveChangesAsync();
+
+    return Results.Created($"/users/{user.Id}", new { user.Id, user.Username });
+});
+
+app.MapPost("/auth/login", async (LoginRequest request, BlogDbContext db, JwtTokenService tokens) =>
+{
+    if (RequestValidator.Validate(request) is { } error)
+        return error;
+
+    var user = await db.Users.FirstOrDefaultAsync(u => u.Username == request.Username);
+
+    // Same 401 whether the username or the password is wrong — don't reveal which.
+    if (user is null || !PasswordHasher.Verify(request.Password, user.PasswordHash))
+        return Results.Unauthorized();
+
+    return Results.Ok(new { token = tokens.CreateToken(user) });
+});
+
+// --- Post endpoints ----------------------------------------------------------
+
+var posts = app.MapGroup("/posts");
+
+// Public reads.
+posts.MapGet("/", async (BlogDbContext db) =>
+    await db.Posts
+            .OrderByDescending(p => p.Id)
+            .Select(p => new { p.Id, p.Title, p.Content, p.CreatedAt, Author = p.Author!.Username })
+            .ToListAsync());
+
+posts.MapGet("/{id:int}", async (int id, BlogDbContext db) =>
+    await db.Posts
+            .Where(p => p.Id == id)
+            .Select(p => new { p.Id, p.Title, p.Content, p.CreatedAt, Author = p.Author!.Username })
+            .FirstOrDefaultAsync() is { } post
+        ? Results.Ok(post)
+        : Results.NotFound());
+
+// Protected writes — .RequireAuthorization() rejects missing/invalid tokens with 401.
+posts.MapPost("/", async (CreatePostRequest request, ClaimsPrincipal principal, BlogDbContext db) =>
+{
+    if (RequestValidator.Validate(request) is { } error)
+        return error;
+
+    var authorId = GetUserId(principal);
+    var post = new BlogPost { Title = request.Title, Content = request.Content, AuthorId = authorId };
+
+    db.Posts.Add(post);
+    await db.SaveChangesAsync();
+
+    return Results.Created($"/posts/{post.Id}", new { post.Id, post.Title, post.Content, post.CreatedAt });
+})
+.RequireAuthorization();
+
+posts.MapPut("/{id:int}", async (int id, UpdatePostRequest request, ClaimsPrincipal principal, BlogDbContext db) =>
+{
+    if (RequestValidator.Validate(request) is { } error)
+        return error;
+
+    var post = await db.Posts.FindAsync(id);
+    if (post is null)
+        return Results.NotFound();
+
+    // Ownership check: you can only edit YOUR OWN posts.
+    if (post.AuthorId != GetUserId(principal))
+        return Results.Forbid();
+
+    post.Title = request.Title;
+    post.Content = request.Content;
+    await db.SaveChangesAsync();
+
+    return Results.NoContent();
+})
+.RequireAuthorization();
+
+posts.MapDelete("/{id:int}", async (int id, ClaimsPrincipal principal, BlogDbContext db) =>
+{
+    var post = await db.Posts.FindAsync(id);
+    if (post is null)
+        return Results.NotFound();
+
+    if (post.AuthorId != GetUserId(principal))
+        return Results.Forbid();
+
+    db.Posts.Remove(post);
+    await db.SaveChangesAsync();
+
+    return Results.NoContent();
+})
+.RequireAuthorization();
+
+app.MapGet("/", () => Results.Ok(new { service = "Blog API with Auth", docs = "see README.md" }));
+
+app.Run();
+
+// Reads the user id from the "sub" claim of the validated JWT.
+static int GetUserId(ClaimsPrincipal principal) =>
+    int.Parse(principal.FindFirstValue(JwtRegisteredClaimNames.Sub)
+              ?? throw new InvalidOperationException("Token has no subject claim."));
+
+// Exposes the implicit Program class so the test project can spin up the app
+// with WebApplicationFactory<Program>.
+public partial class Program;
+==== 05 - Blog API with Auth/src/BlogApi/RequestValidator.cs
+using System.ComponentModel.DataAnnotations;
+
+namespace BlogApi;
+
+/// <summary>
+/// Boundary validation via the framework's <see cref="Validator"/>.
+/// Returns a 400 <see cref="IResult"/> when invalid, else null.
+/// </summary>
+public static class RequestValidator
+{
+    public static IResult? Validate(object model)
+    {
+        var context = new ValidationContext(model);
+        var results = new List<ValidationResult>();
+
+        if (Validator.TryValidateObject(model, context, results, validateAllProperties: true))
+            return null;
+
+        var errors = results
+            .SelectMany(r => r.MemberNames.DefaultIfEmpty(string.Empty),
+                        (r, member) => (Member: member, r.ErrorMessage))
+            .GroupBy(x => x.Member)
+            .ToDictionary(g => g.Key, g => g.Select(x => x.ErrorMessage ?? "Invalid").ToArray());
+
+        return Results.ValidationProblem(errors);
+    }
+}
+==== 05 - Blog API with Auth/tests/BlogApi.Tests/BlogApi.Tests.csproj
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="FluentAssertions" Version="7.2.0" />
+    <!-- Spins up the real app in-memory for end-to-end tests via WebApplicationFactory. -->
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.0" />
+    <!-- Lets the test swap the DB for an in-memory SQLite connection. -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.0" />
+    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.5" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\BlogApi\BlogApi.csproj" />
+  </ItemGroup>
+
+</Project>
+==== 05 - Blog API with Auth/tests/BlogApi.Tests/BlogApiFactory.cs
+using BlogApi.Data;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Data.Sqlite;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+
+namespace BlogApi.Tests;
+
+/// <summary>
+/// Boots the REAL Blog API in memory for integration tests, but swaps its SQLite
+/// file database for an in-memory SQLite connection so tests are fast and isolated.
+///
+/// LESSON — test the app as a black box.
+/// WebApplicationFactory runs the actual pipeline (routing, auth, validation, EF).
+/// These tests would catch a broken JWT config or a missing [Authorize] — things
+/// pure unit tests never see.
+/// </summary>
+public sealed class BlogApiFactory : WebApplicationFactory<Program>
+{
+    // A single open connection keeps the in-memory database alive for the whole
+    // test class. Close it and the data vanishes.
+    private readonly SqliteConnection _connection = new("DataSource=:memory:");
+
+    protected override void ConfigureWebHost(IWebHostBuilder builder)
+    {
+        _connection.Open();
+
+        builder.ConfigureServices(services =>
+        {
+            // Remove the app's real DbContext registration...
+            services.RemoveAll<DbContextOptions<BlogDbContext>>();
+
+            // ...and point it at our in-memory connection instead.
+            services.AddDbContext<BlogDbContext>(options => options.UseSqlite(_connection));
+        });
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        base.Dispose(disposing);
+        if (disposing)
+            _connection.Dispose();
+    }
+}
+==== 05 - Blog API with Auth/tests/BlogApi.Tests/BlogApiTests.cs
+using System.Net;
+using System.Net.Http.Headers;
+using System.Net.Http.Json;
+
+namespace BlogApi.Tests;
+
+/// <summary>
+/// End-to-end tests for the auth + posts flow. Each test uses a unique username
+/// so they stay independent even though they share the class's in-memory DB.
+/// </summary>
+public class BlogApiTests(BlogApiFactory factory) : IClassFixture<BlogApiFactory>
+{
+    private readonly HttpClient _client = factory.CreateClient();
+
+    // --- helpers -------------------------------------------------------------
+
+    private static string UniqueUser() => "user_" + Guid.NewGuid().ToString("N")[..8];
+
+    /// <summary>Registers a user and returns a JWT for them.</summary>
+    private async Task<string> RegisterAndLoginAsync(string username, string password = "supersecret1")
+    {
+        var register = await _client.PostAsJsonAsync("/auth/register", new { username, password });
+        register.StatusCode.Should().Be(HttpStatusCode.Created);
+
+        var login = await _client.PostAsJsonAsync("/auth/login", new { username, password });
+        login.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var body = await login.Content.ReadFromJsonAsync<TokenResponse>();
+        body!.Token.Should().NotBeNullOrWhiteSpace();
+        return body.Token;
+    }
+
+    // --- tests ---------------------------------------------------------------
+
+    [Fact]
+    public async Task Register_then_login_returns_a_token()
+    {
+        var token = await RegisterAndLoginAsync(UniqueUser());
+        token.Should().NotBeNullOrWhiteSpace();
+    }
+
+    [Fact]
+    public async Task Register_with_short_password_returns_400()
+    {
+        var response = await _client.PostAsJsonAsync("/auth/register",
+            new { username = UniqueUser(), password = "short" });
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task Login_with_wrong_password_returns_401()
+    {
+        var username = UniqueUser();
+        await RegisterAndLoginAsync(username);
+
+        var response = await _client.PostAsJsonAsync("/auth/login",
+            new { username, password = "wrong-password" });
+
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+    }
+
+    [Fact]
+    public async Task Listing_posts_is_public()
+    {
+        var response = await _client.GetAsync("/posts");
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task Creating_a_post_without_a_token_returns_401()
+    {
+        var response = await _client.PostAsJsonAsync("/posts",
+            new { title = "No auth", content = "Should be rejected" });
+
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+    }
+
+    [Fact]
+    public async Task Creating_a_post_with_a_token_then_reading_it_works()
+    {
+        var token = await RegisterAndLoginAsync(UniqueUser());
+        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+        var create = await _client.PostAsJsonAsync("/posts",
+            new { title = "Hello", content = "World" });
+        create.StatusCode.Should().Be(HttpStatusCode.Created);
+
+        var created = await create.Content.ReadFromJsonAsync<PostResponse>();
+        created!.Id.Should().BeGreaterThan(0);
+
+        var get = await _client.GetAsync($"/posts/{created.Id}");
+        get.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var fetched = await get.Content.ReadFromJsonAsync<PostResponse>();
+        fetched!.Title.Should().Be("Hello");
+    }
+
+    [Fact]
+    public async Task A_user_cannot_edit_another_users_post()
+    {
+        // Author creates a post.
+        var authorToken = await RegisterAndLoginAsync(UniqueUser());
+        var authorClient = factory.CreateClient();
+        authorClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", authorToken);
+
+        var create = await authorClient.PostAsJsonAsync("/posts",
+            new { title = "Mine", content = "Hands off" });
+        var post = await create.Content.ReadFromJsonAsync<PostResponse>();
+
+        // A different user tries to edit it -> 403 Forbidden.
+        var otherToken = await RegisterAndLoginAsync(UniqueUser());
+        var otherClient = factory.CreateClient();
+        otherClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", otherToken);
+
+        var edit = await otherClient.PutAsJsonAsync($"/posts/{post!.Id}",
+            new { title = "Hijacked", content = "Not allowed" });
+
+        edit.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    }
+
+    // DTOs used only for deserializing responses in tests.
+    private sealed record TokenResponse(string Token);
+    private sealed record PostResponse(int Id, string Title, string Content);
+}
+==== 05 - Blog API with Auth/tests/BlogApi.Tests/GlobalUsings.cs
+global using Xunit;
+global using FluentAssertions;
+==== 06 - Background Job Runner/src/JobRunner/DemoJobProducer.cs
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+
+namespace JobRunner;
+
+/// <summary>
+/// The producer: enqueues a batch of demo jobs, then completes the queue so the
+/// processor knows no more work is coming and the app can exit cleanly.
+///
+/// In a real app the producer is usually an API endpoint, a timer, or a message
+/// from a broker — anything that hands work off to be done "later".
+/// </summary>
+public sealed class DemoJobProducer(
+    JobQueue queue,
+    ILogger<DemoJobProducer> logger) : BackgroundService
+{
+    private const int JobCount = 10;
+
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        for (var i = 1; i <= JobCount; i++)
+        {
+            var job = new Job(i, $"send-email-{i}");
+            await queue.EnqueueAsync(job, stoppingToken);
+            logger.LogInformation("📥 Enqueued job {Id} '{Name}'", job.Id, job.Name);
+
+            await Task.Delay(100, stoppingToken);
+        }
+
+        // Tell the consumer the party's over — it will drain, then stop the app.
+        queue.Complete();
+        logger.LogInformation("Producer finished; queue completed.");
+    }
+}
+==== 06 - Background Job Runner/src/JobRunner/Job.cs
+namespace JobRunner;
+
+/// <summary>
+/// A unit of background work.
+///
+/// LESSON — keep queued messages small and serializable.
+/// A job should carry an ID and just enough data to do the work later. In a real
+/// system this crosses a process/network boundary (e.g. Azure Service Bus), so
+/// you pass identifiers and payloads, not live objects or open connections.
+/// </summary>
+public sealed record Job(int Id, string Name);
+==== 06 - Background Job Runner/src/JobRunner/JobProcessor.cs
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+
+namespace JobRunner;
+
+/// <summary>
+/// The consumer: a long-running <see cref="BackgroundService"/> that pulls jobs
+/// off the queue and processes each one, retrying transient failures.
+///
+/// LESSON — a hosted service is your always-on worker.
+/// <see cref="BackgroundService.ExecuteAsync"/> starts with the app and runs
+/// until shutdown. The <paramref name="stoppingToken"/> is your cue to stop
+/// gracefully when the host is shutting down — always honour it.
+/// </summary>
+public sealed class JobProcessor(
+    JobQueue queue,
+    IHostApplicationLifetime lifetime,
+    ILogger<JobProcessor> logger) : BackgroundService
+{
+    private const int MaxAttempts = 3;
+    private static readonly TimeSpan BaseDelay = TimeSpan.FromMilliseconds(200);
+
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        logger.LogInformation("JobProcessor started, waiting for jobs...");
+
+        // Drains the channel until the producer completes it and it's empty.
+        await foreach (var job in queue.DequeueAllAsync(stoppingToken))
+        {
+            await ProcessWithRetryAsync(job, stoppingToken);
+        }
+
+        logger.LogInformation("All jobs drained. Shutting down.");
+        lifetime.StopApplication(); // clean exit once the demo work is done
+    }
+
+    /// <summary>
+    /// Runs a job with up to <see cref="MaxAttempts"/> tries and exponential backoff.
+    ///
+    /// LESSON — retries need a limit and a delay.
+    /// * A cap (3) stops a permanently-broken job from looping forever.
+    /// * Exponential backoff (200ms, 400ms, ...) avoids hammering a struggling
+    ///   downstream service. Real systems add "jitter" (randomness) too.
+    /// * After the last failure the job goes to a "dead letter" log for a human.
+    /// </summary>
+    private async Task ProcessWithRetryAsync(Job job, CancellationToken ct)
+    {
+        for (var attempt = 1; attempt <= MaxAttempts; attempt++)
+        {
+            try
+            {
+                await DoWorkAsync(job, ct);
+                logger.LogInformation("✅ Job {Id} '{Name}' succeeded on attempt {Attempt}",
+                    job.Id, job.Name, attempt);
+                return;
+            }
+            catch (OperationCanceledException)
+            {
+                throw; // shutdown requested — let it bubble up, don't "retry" a cancel
+            }
+            catch (Exception ex)
+            {
+                if (attempt == MaxAttempts)
+                {
+                    logger.LogError("💀 Job {Id} '{Name}' failed after {Max} attempts: {Message}. Dead-lettered.",
+                        job.Id, job.Name, MaxAttempts, ex.Message);
+                    return;
+                }
+
+                var delay = BaseDelay * Math.Pow(2, attempt - 1);
+                logger.LogWarning("⚠️  Job {Id} attempt {Attempt} failed: {Message}. Retrying in {Delay}ms",
+                    job.Id, attempt, ex.Message, delay.TotalMilliseconds);
+                await Task.Delay(delay, ct);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Simulated work: pretends to do I/O and fails ~40% of the time so you can
+    /// watch the retry logic kick in. Replace this with a real handler.
+    /// </summary>
+    private static async Task DoWorkAsync(Job job, CancellationToken ct)
+    {
+        await Task.Delay(200, ct);
+
+        if (Random.Shared.NextDouble() < 0.4)
+            throw new InvalidOperationException("transient downstream error (simulated)");
+    }
+}
+==== 06 - Background Job Runner/src/JobRunner/JobQueue.cs
+using System.Threading.Channels;
+
+namespace JobRunner;
+
+/// <summary>
+/// An in-memory producer/consumer queue built on <see cref="Channel{T}"/>.
+///
+/// LESSON — Channels are the modern .NET in-process queue.
+/// A <b>bounded</b> channel gives you back-pressure: if consumers fall behind and
+/// the queue fills up, producers *await* instead of blowing up memory. One or more
+/// producers write; one or more consumers read — all thread-safe, all async.
+/// </summary>
+public sealed class JobQueue
+{
+    private readonly Channel<Job> _channel;
+
+    public JobQueue()
+    {
+        // Capacity 100; when full, writers wait (back-pressure) rather than drop.
+        _channel = Channel.CreateBounded<Job>(new BoundedChannelOptions(capacity: 100)
+        {
+            FullMode = BoundedChannelFullMode.Wait,
+            SingleReader = true,   // one consumer (the JobProcessor)
+            SingleWriter = false   // possibly many producers
+        });
+    }
+
+    /// <summary>Adds a job. Awaits if the channel is full.</summary>
+    public ValueTask EnqueueAsync(Job job, CancellationToken ct = default) =>
+        _channel.Writer.WriteAsync(job, ct);
+
+    /// <summary>Async stream of jobs; ends when the queue is completed and drained.</summary>
+    public IAsyncEnumerable<Job> DequeueAllAsync(CancellationToken ct = default) =>
+        _channel.Reader.ReadAllAsync(ct);
+
+    /// <summary>Signals that no more jobs will be added, so consumers can finish.</summary>
+    public void Complete() => _channel.Writer.Complete();
+}
+==== 06 - Background Job Runner/src/JobRunner/JobRunner.csproj
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The Generic Host: DI, configuration, logging, and BackgroundService.
+         System.Threading.Channels ships with the runtime (no package needed). -->
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="appsettings.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+</Project>
+==== 06 - Background Job Runner/src/JobRunner/Program.cs
+using JobRunner;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+
+// =============================================================================
+// Background Job Runner — Intermediate project #6
+// Focus: Hosted services + System.Threading.Channels + retries.
+//
+// One producer enqueues jobs onto a Channel-backed queue; one hosted consumer
+// processes them with retry + exponential backoff. The app exits once every job
+// has been handled (or dead-lettered).
+// =============================================================================
+
+var builder = Host.CreateApplicationBuilder(args);
+
+// The queue is shared state -> a singleton. Producer and consumer both get it.
+builder.Services.AddSingleton<JobQueue>();
+
+// Two hosted services running side by side: one produces, one consumes.
+builder.Services.AddHostedService<DemoJobProducer>();
+builder.Services.AddHostedService<JobProcessor>();
+
+var host = builder.Build();
+await host.RunAsync();
+==== 07 - AI Support Chatbot/src/AiChatbot/AiChatbot.csproj
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Microsoft.Extensions.AI: the vendor-neutral IChatClient abstraction.
+         Swap Ollama for OpenAI/Azure later without touching your app code. -->
+    <PackageReference Include="Microsoft.Extensions.AI" Version="10.4.1" />
+    <!-- OllamaSharp's client implements IChatClient for a local Ollama server. -->
+    <PackageReference Include="OllamaSharp" Version="5.4.25" />
+  </ItemGroup>
+
+</Project>
+==== 07 - AI Support Chatbot/src/AiChatbot/Program.cs
+using Microsoft.Extensions.AI;
+using OllamaSharp;
+
+// =============================================================================
+// AI Support Chatbot — Advanced project #7
+// Focus: Microsoft.Extensions.AI (IChatClient) + streaming responses.
+//
+// A console support bot for a fictional product ("Contoso Cloud"). It keeps the
+// conversation history, sends it to a local LLM via Ollama, and STREAMS the reply
+// token-by-token so it feels responsive.
+//
+// Prerequisite: Ollama running locally with a chat model pulled, e.g.
+//   ollama pull llama3.2
+// =============================================================================
+
+// Config via environment variables (with sensible defaults) — no extra packages.
+var ollamaUrl = Environment.GetEnvironmentVariable("OLLAMA_URL") ?? "http://127.0.0.1:11434";
+var model = Environment.GetEnvironmentVariable("OLLAMA_MODEL") ?? "llama3.2";
+
+// LESSON — program against the abstraction, not the vendor.
+// `IChatClient` is from Microsoft.Extensions.AI. Today it's backed by Ollama;
+// switching to OpenAI or Azure OpenAI later is a one-line change here, and the
+// rest of the app (history, streaming loop) stays identical.
+IChatClient chat = new OllamaApiClient(new Uri(ollamaUrl), model);
+
+// The system message sets the bot's role and boundaries. It's the cheapest,
+// highest-leverage way to steer an LLM — no fine-tuning required.
+const string systemPrompt = """
+    You are "Nimbus", the friendly support assistant for Contoso Cloud, a developer
+    platform that hosts web apps and databases.
+    - Be concise and practical. Prefer short steps over long essays.
+    - If a question is outside Contoso Cloud (e.g. general trivia), politely steer
+      back to how you can help with the product.
+    - If you don't know something, say so and suggest where the user could look.
+    Never invent pricing, SLAs, or features you're unsure about.
+    """;
+
+// The full conversation. We resend it every turn so the model has context —
+// LLMs are stateless; "memory" is just the message list you pass in.
+var history = new List<ChatMessage>
+{
+    new(ChatRole.System, systemPrompt)
+};
+
+Console.WriteLine("💬 Nimbus — Contoso Cloud support bot");
+Console.WriteLine($"   model: {model}  ·  server: {ollamaUrl}");
+Console.WriteLine("   Commands: /reset (new conversation), /exit (quit)\n");
+
+while (true)
+{
+    Console.ForegroundColor = ConsoleColor.Cyan;
+    Console.Write("You: ");
+    Console.ResetColor();
+
+    var input = Console.ReadLine();
+
+    if (string.IsNullOrWhiteSpace(input))
+        continue;
+
+    switch (input.Trim().ToLowerInvariant())
+    {
+        case "/exit" or "/quit":
+            Console.WriteLine("Bye! 👋");
+            return;
+
+        case "/reset":
+            history.RemoveRange(1, history.Count - 1); // keep the system message
+            Console.WriteLine("(conversation reset)\n");
+            continue;
+    }
+
+    history.Add(new ChatMessage(ChatRole.User, input));
+
+    Console.ForegroundColor = ConsoleColor.Green;
+    Console.Write("Nimbus: ");
+    Console.ResetColor();
+
+    try
+    {
+        // STREAMING: instead of waiting for the whole answer, we print each chunk
+        // as it arrives. We also accumulate the text so we can store the full
+        // reply back into the history for the next turn.
+        var reply = new System.Text.StringBuilder();
+
+        await foreach (var update in chat.GetStreamingResponseAsync(history))
+        {
+            Console.Write(update.Text);
+            reply.Append(update.Text);
+        }
+
+        Console.WriteLine("\n");
+        history.Add(new ChatMessage(ChatRole.Assistant, reply.ToString()));
+    }
+    catch (HttpRequestException ex)
+    {
+        // Most common cause: Ollama isn't running or the model isn't pulled.
+        Console.ForegroundColor = ConsoleColor.Red;
+        Console.WriteLine($"\n⚠️  Couldn't reach the model: {ex.Message}");
+        Console.WriteLine($"    Is Ollama running? Try:  ollama pull {model}  then  ollama serve\n");
+        Console.ResetColor();
+
+        // Drop the user turn we couldn't answer so history stays consistent.
+        history.RemoveAt(history.Count - 1);
+    }
+}
+==== 08 - Docs Q&A with RAG/src/DocsQa/DocsQa.csproj
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.AI" Version="10.4.1" />
+    <PackageReference Include="OllamaSharp" Version="5.4.25" />
+    <!-- SIMD-accelerated cosine similarity for vector search. -->
+    <PackageReference Include="System.Numerics.Tensors" Version="10.0.5" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Ship the sample knowledge base next to the app so it can be read at runtime. -->
+    <None Include="knowledge\**\*.md" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>
+==== 08 - Docs Q&A with RAG/src/DocsQa/Program.cs
+using DocsQa.Services;
+using Microsoft.Extensions.AI;
+using OllamaSharp;
+
+// =============================================================================
+// Docs Q&A with RAG — Advanced project #8
+// Focus: Embeddings + vector search (Retrieval-Augmented Generation).
+//
+// Loads a small knowledge base about the fictional "Contoso Cloud", embeds it,
+// and answers your questions grounded ONLY in those documents.
+//
+// Prerequisite: Ollama running locally with:
+//   ollama pull all-minilm     (embeddings)
+//   ollama pull llama3.2       (chat / answer generation)
+// =============================================================================
+
+var ollamaUrl = new Uri(Environment.GetEnvironmentVariable("OLLAMA_URL") ?? "http://127.0.0.1:11434");
+var embedModel = Environment.GetEnvironmentVariable("OLLAMA_EMBED_MODEL") ?? "all-minilm";
+var chatModel = Environment.GetEnvironmentVariable("OLLAMA_MODEL") ?? "llama3.2";
+
+// One Ollama client backs embeddings, another backs chat — both via Microsoft.Extensions.AI.
+IEmbeddingGenerator<string, Embedding<float>> embedder = new OllamaApiClient(ollamaUrl, embedModel);
+IChatClient chat = new OllamaApiClient(ollamaUrl, chatModel);
+
+var store = new InMemoryVectorStore();
+var rag = new RagPipeline(embedder, chat, store);
+
+// --- Load the knowledge base -------------------------------------------------
+var knowledgeDir = Path.Combine(AppContext.BaseDirectory, "knowledge");
+var documents = Directory
+    .EnumerateFiles(knowledgeDir, "*.md")
+    .Select(path => (Source: Path.GetFileName(path), Content: File.ReadAllText(path)))
+    .ToList();
+
+Console.WriteLine("📚 Docs Q&A with RAG");
+Console.WriteLine($"   Loaded {documents.Count} documents from /knowledge");
+
+try
+{
+    Console.WriteLine("   Embedding documents (this calls Ollama)...");
+    await rag.IngestAsync(documents);
+    Console.WriteLine($"   Indexed {store.Count} chunks. Ask away!\n");
+}
+catch (HttpRequestException ex)
+{
+    Console.WriteLine($"\n⚠️  Couldn't reach Ollama for embeddings: {ex.Message}");
+    Console.WriteLine($"    Try:  ollama pull {embedModel}  and  ollama pull {chatModel}\n");
+    return;
+}
+
+Console.WriteLine("Sample questions:");
+Console.WriteLine("  • How do I deploy a web app and which region is the default?");
+Console.WriteLine("  • What are the rate limits?");
+Console.WriteLine("  • How long are database backups kept?");
+Console.WriteLine("  • What's the capital of France?   (should say it doesn't know)\n");
+
+while (true)
+{
+    Console.ForegroundColor = ConsoleColor.Cyan;
+    Console.Write("Question (empty to quit): ");
+    Console.ResetColor();
+
+    var question = Console.ReadLine();
+    if (string.IsNullOrWhiteSpace(question))
+        break;
+
+    try
+    {
+        var (answer, sources) = await rag.AskAsync(question);
+
+        Console.ForegroundColor = ConsoleColor.Green;
+        Console.WriteLine($"\nAnswer: {answer}");
+        Console.ResetColor();
+
+        // Showing the retrieved sources builds trust and helps you debug retrieval.
+        Console.WriteLine("\nRetrieved from:");
+        foreach (var (chunk, score) in sources)
+            Console.WriteLine($"  • {chunk.Source} (similarity {score:F3})");
+        Console.WriteLine();
+    }
+    catch (HttpRequestException ex)
+    {
+        Console.ForegroundColor = ConsoleColor.Red;
+        Console.WriteLine($"\n⚠️  Model call failed: {ex.Message}\n");
+        Console.ResetColor();
+    }
+}
+
+Console.WriteLine("Bye! 👋");
+==== 08 - Docs Q&A with RAG/src/DocsQa/Services/DocumentChunker.cs
+namespace DocsQa.Services;
+
+/// <summary>One retrievable piece of a document, tagged with where it came from.</summary>
+public sealed record Chunk(string Source, string Text);
+
+/// <summary>
+/// Splits documents into chunks for embedding.
+///
+/// LESSON — chunking is a real quality lever in RAG.
+/// Embed a whole document and the vector is a blurry average of everything in it,
+/// so search is imprecise. Embed tiny fragments and you lose context. A middle
+/// ground — a paragraph or two — usually works best. Here we split on blank lines
+/// and merge very short pieces so each chunk carries a coherent idea.
+/// </summary>
+public static class DocumentChunker
+{
+    private const int MinChunkLength = 200;
+
+    public static IReadOnlyList<Chunk> Chunk(string source, string content)
+    {
+        // Split into paragraphs on blank lines.
+        var paragraphs = content
+            .Replace("\r\n", "\n")
+            .Split("\n\n", StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+        var chunks = new List<Chunk>();
+        var buffer = "";
+
+        foreach (var paragraph in paragraphs)
+        {
+            buffer = string.IsNullOrEmpty(buffer) ? paragraph : $"{buffer}\n\n{paragraph}";
+
+            // Flush once we've accumulated enough text for a meaningful chunk.
+            if (buffer.Length >= MinChunkLength)
+            {
+                chunks.Add(new Chunk(source, buffer));
+                buffer = "";
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(buffer))
+            chunks.Add(new Chunk(source, buffer));
+
+        return chunks;
+    }
+}
+==== 08 - Docs Q&A with RAG/src/DocsQa/Services/InMemoryVectorStore.cs
+using System.Numerics.Tensors;
+
+namespace DocsQa.Services;
+
+/// <summary>
+/// A tiny in-memory vector database.
+///
+/// LESSON — "vector search" is just nearest-neighbour by cosine similarity.
+/// We store each chunk next to its embedding (a float array). To find the most
+/// relevant chunks for a query, we embed the query and compare it to every stored
+/// vector with <b>cosine similarity</b> (1.0 = same direction/meaning, 0 = unrelated).
+///
+/// This brute-force scan is perfect for a demo. At scale you'd swap it for a real
+/// vector store (pgvector, Qdrant, Azure AI Search) that indexes vectors — but the
+/// idea is identical.
+/// </summary>
+public sealed class InMemoryVectorStore
+{
+    private readonly List<(Chunk Chunk, ReadOnlyMemory<float> Embedding)> _items = [];
+
+    public int Count => _items.Count;
+
+    public void Add(Chunk chunk, ReadOnlyMemory<float> embedding) =>
+        _items.Add((chunk, embedding));
+
+    /// <summary>Returns the <paramref name="topK"/> chunks most similar to the query vector.</summary>
+    public IReadOnlyList<(Chunk Chunk, float Score)> Search(ReadOnlyMemory<float> query, int topK = 3) =>
+        _items
+            .Select(item => (
+                item.Chunk,
+                Score: TensorPrimitives.CosineSimilarity(query.Span, item.Embedding.Span)))
+            .OrderByDescending(x => x.Score)
+            .Take(topK)
+            .ToList();
+}
+==== 08 - Docs Q&A with RAG/src/DocsQa/Services/RagPipeline.cs
+using Microsoft.Extensions.AI;
+
+namespace DocsQa.Services;
+
+/// <summary>
+/// The RAG pipeline: <b>R</b>etrieval-<b>A</b>ugmented <b>G</b>eneration.
+///
+/// Two phases:
+///   1. INGEST  — chunk docs, embed each chunk, store the vectors.
+///   2. ASK     — embed the question, find the closest chunks (retrieval), then
+///                ask the LLM to answer using ONLY those chunks (generation).
+///
+/// LESSON — RAG grounds the model in YOUR data.
+/// The LLM never saw Contoso Cloud's docs during training. By retrieving the
+/// relevant chunks and pasting them into the prompt, we let a general model answer
+/// specific questions accurately — and we tell it to say "I don't know" when the
+/// answer isn't in the context, which curbs hallucination.
+/// </summary>
+public sealed class RagPipeline(
+    IEmbeddingGenerator<string, Embedding<float>> embedder,
+    IChatClient chat,
+    InMemoryVectorStore store)
+{
+    /// <summary>Chunks and embeds every document, filling the vector store.</summary>
+    public async Task IngestAsync(IEnumerable<(string Source, string Content)> documents)
+    {
+        var chunks = documents
+            .SelectMany(doc => DocumentChunker.Chunk(doc.Source, doc.Content))
+            .ToList();
+
+        // Batch-embed all chunk texts in one call (far faster than one-by-one).
+        var texts = chunks.Select(c => c.Text).ToList();
+        var embeddings = await embedder.GenerateAsync(texts);
+
+        for (var i = 0; i < chunks.Count; i++)
+            store.Add(chunks[i], embeddings[i].Vector);
+    }
+
+    /// <summary>Answers a question using retrieved context. Returns the answer and its sources.</summary>
+    public async Task<(string Answer, IReadOnlyList<(Chunk Chunk, float Score)> Sources)> AskAsync(string question)
+    {
+        // --- RETRIEVAL ---
+        var queryEmbedding = await embedder.GenerateAsync([question]);
+        var matches = store.Search(queryEmbedding[0].Vector, topK: 3);
+
+        var context = string.Join(
+            "\n\n---\n\n",
+            matches.Select(m => $"[{m.Chunk.Source}]\n{m.Chunk.Text}"));
+
+        // --- GENERATION ---
+        // The system prompt forces the model to stay grounded in the context.
+        var messages = new List<ChatMessage>
+        {
+            new(ChatRole.System, """
+                You are a documentation assistant. Answer the user's question using
+                ONLY the context provided below. If the answer is not in the context,
+                reply exactly: "I don't know based on the provided documents."
+                Be concise and cite the source file name in brackets when you can.
+                """),
+            new(ChatRole.User, $"Context:\n{context}\n\nQuestion: {question}")
+        };
+
+        var response = await chat.GetResponseAsync(messages);
+        return (response.Text, matches);
+    }
+}
+==== 09 - Smart Invoice Parser/src/InvoiceParser/InvoiceParser.csproj
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.AI" Version="10.4.1" />
+    <PackageReference Include="OllamaSharp" Version="5.4.25" />
+  </ItemGroup>
+
+</Project>
+==== 09 - Smart Invoice Parser/src/InvoiceParser/Models/Invoice.cs
+using System.ComponentModel;
+
+namespace InvoiceParser.Models;
+
+/// <summary>
+/// The structured shape we want the LLM to extract an invoice into.
+///
+/// LESSON — the type IS the prompt (structured output).
+/// Microsoft.Extensions.AI turns this class into a JSON schema and asks the model
+/// to return data that matches it. The <see cref="DescriptionAttribute"/>s become
+/// hints in that schema, steering the extraction. We use plain get/set properties
+/// (not positional records) because the schema binder fills them in.
+/// </summary>
+public sealed class Invoice
+{
+    [Description("The invoice number or ID, e.g. INV-1042")]
+    public string? InvoiceNumber { get; set; }
+
+    [Description("The vendor / seller company name")]
+    public string? VendorName { get; set; }
+
+    [Description("Invoice date in ISO format YYYY-MM-DD")]
+    public string? InvoiceDate { get; set; }
+
+    [Description("3-letter currency code, e.g. USD, EUR")]
+    public string? Currency { get; set; }
+
+    public List<InvoiceLine> LineItems { get; set; } = [];
+
+    [Description("Sum of all line totals, before tax")]
+    public decimal Subtotal { get; set; }
+
+    [Description("Total tax amount")]
+    public decimal Tax { get; set; }
+
+    [Description("Grand total the customer must pay (subtotal + tax)")]
+    public decimal Total { get; set; }
+}
+
+/// <summary>One line on the invoice.</summary>
+public sealed class InvoiceLine
+{
+    public string? Description { get; set; }
+    public decimal Quantity { get; set; }
+    public decimal UnitPrice { get; set; }
+
+    [Description("Quantity multiplied by unit price")]
+    public decimal LineTotal { get; set; }
+}
+==== 09 - Smart Invoice Parser/src/InvoiceParser/Program.cs
+using System.Text.Json;
+using InvoiceParser.Models;
+using InvoiceParser.Services;
+using Microsoft.Extensions.AI;
+using OllamaSharp;
+
+// =============================================================================
+// Smart Invoice Parser — Advanced project #9
+// Focus: Structured output + validating AI answers.
+//
+// Reads raw invoice text, asks the LLM to extract it into a typed Invoice
+// (structured output), then VALIDATES the result with plain C# math — because you
+// never trust an LLM's numbers without checking them.
+//
+// Prerequisite for the live path: Ollama running with a chat model, e.g.
+//   ollama pull llama3.2
+// (An OFFLINE validator demo runs even without Ollama.)
+// =============================================================================
+
+var ollamaUrl = new Uri(Environment.GetEnvironmentVariable("OLLAMA_URL") ?? "http://127.0.0.1:11434");
+var chatModel = Environment.GetEnvironmentVariable("OLLAMA_MODEL") ?? "llama3.2";
+
+var jsonOptions = new JsonSerializerOptions { WriteIndented = true };
+
+Console.WriteLine("🧾 Smart Invoice Parser\n");
+
+// --- Always-on OFFLINE demo: the validator catching a bad extraction ---------
+// This needs no AI, so it always runs and proves the validation logic.
+Console.WriteLine("── Offline demo: validating a KNOWN-BAD extraction ──");
+var canned = SampleData.CannedBadExtraction();
+PrintValidation(InvoiceValidator.Validate(canned));
+Console.WriteLine();
+
+// --- Live path: extract real invoices with the LLM ---------------------------
+IChatClient chat = new OllamaApiClient(ollamaUrl, chatModel);
+var extractor = new InvoiceExtractor(chat);
+
+var samples = new (string Name, string Text)[]
+{
+    ("Clean invoice", SampleData.CleanInvoice),
+    ("Inconsistent invoice", SampleData.InconsistentInvoice)
+};
+
+foreach (var (name, text) in samples)
+{
+    Console.WriteLine($"── Extracting: {name} ──");
+
+    Invoice? invoice;
+    try
+    {
+        invoice = await extractor.ExtractAsync(text);
+    }
+    catch (HttpRequestException ex)
+    {
+        Console.WriteLine($"⚠️  Skipping live extraction — Ollama unreachable: {ex.Message}");
+        Console.WriteLine($"    Try:  ollama pull {chatModel}  then  ollama serve\n");
+        break;
+    }
+
+    if (invoice is null)
+    {
+        Console.WriteLine("❌ The model's reply couldn't be bound to the Invoice schema.\n");
+        continue;
+    }
+
+    Console.WriteLine("Extracted (structured output):");
+    Console.WriteLine(JsonSerializer.Serialize(invoice, jsonOptions));
+
+    Console.WriteLine("\nValidation:");
+    PrintValidation(InvoiceValidator.Validate(invoice));
+    Console.WriteLine();
+}
+
+Console.WriteLine("Done.");
+
+// --- helpers -----------------------------------------------------------------
+
+static void PrintValidation(IReadOnlyList<string> issues)
+{
+    if (issues.Count == 0)
+    {
+        Console.ForegroundColor = ConsoleColor.Green;
+        Console.WriteLine("✅ Passed — the numbers are internally consistent.");
+        Console.ResetColor();
+        return;
+    }
+
+    Console.ForegroundColor = ConsoleColor.Yellow;
+    Console.WriteLine($"⚠️  {issues.Count} issue(s) found:");
+    foreach (var issue in issues)
+        Console.WriteLine($"   • {issue}");
+    Console.ResetColor();
+}
+==== 09 - Smart Invoice Parser/src/InvoiceParser/Services/InvoiceExtractor.cs
+using InvoiceParser.Models;
+using Microsoft.Extensions.AI;
+
+namespace InvoiceParser.Services;
+
+/// <summary>
+/// Asks the LLM to read raw invoice text and return a structured <see cref="Invoice"/>.
+///
+/// LESSON — structured output beats "parse the JSON yourself".
+/// <c>GetResponseAsync&lt;Invoice&gt;</c> sends the model a JSON schema derived from
+/// the <see cref="Invoice"/> type and deserializes the reply straight into the
+/// object. No brittle string parsing, no regex — and if the model returns
+/// something that doesn't fit the schema, we can detect it.
+/// </summary>
+public sealed class InvoiceExtractor(IChatClient chat)
+{
+    public async Task<Invoice?> ExtractAsync(string rawInvoiceText, CancellationToken ct = default)
+    {
+        var messages = new List<ChatMessage>
+        {
+            new(ChatRole.System, """
+                You extract data from raw invoice text into the provided schema.
+                Rules:
+                - Use numbers (not strings) for all money and quantity fields.
+                - Format the date as ISO YYYY-MM-DD.
+                - Copy the numbers EXACTLY as they appear; do NOT recalculate or "fix" them.
+                - If a field is not present, leave it null or 0.
+                """),
+            new(ChatRole.User, rawInvoiceText)
+        };
+
+        var response = await chat.GetResponseAsync<Invoice>(messages, cancellationToken: ct);
+
+        // TryGetResult is false if the model's reply couldn't be bound to the schema.
+        return response.TryGetResult(out var invoice) ? invoice : null;
+    }
+}
+==== 09 - Smart Invoice Parser/src/InvoiceParser/Services/InvoiceValidator.cs
+using InvoiceParser.Models;
+
+namespace InvoiceParser.Services;
+
+/// <summary>
+/// Validates an extracted <see cref="Invoice"/> with deterministic rules.
+///
+/// LESSON — never trust the AI's numbers. Verify them.
+/// An LLM can misread a digit, drop a line, or "helpfully" round. This validator
+/// is plain C# math with ZERO AI: it checks that quantities × prices equal line
+/// totals, that line totals sum to the subtotal, and that subtotal + tax equals
+/// the grand total. If the model (or the source invoice) is wrong, we catch it.
+///
+/// It's a pure function — trivial to unit-test and impossible to hallucinate.
+/// </summary>
+public static class InvoiceValidator
+{
+    // Money comparisons need a tolerance for rounding (1 cent here).
+    private const decimal Tolerance = 0.01m;
+
+    public static IReadOnlyList<string> Validate(Invoice invoice)
+    {
+        var issues = new List<string>();
+
+        // --- required fields ---
+        if (string.IsNullOrWhiteSpace(invoice.InvoiceNumber))
+            issues.Add("Missing invoice number.");
+
+        if (string.IsNullOrWhiteSpace(invoice.VendorName))
+            issues.Add("Missing vendor name.");
+
+        if (!DateOnly.TryParse(invoice.InvoiceDate, out _))
+            issues.Add($"Invoice date is missing or not a valid date: '{invoice.InvoiceDate}'.");
+
+        if (invoice.LineItems.Count == 0)
+            issues.Add("No line items were extracted.");
+
+        // --- per-line math: quantity × unit price should equal the line total ---
+        for (var i = 0; i < invoice.LineItems.Count; i++)
+        {
+            var line = invoice.LineItems[i];
+            var expected = line.Quantity * line.UnitPrice;
+
+            if (Math.Abs(expected - line.LineTotal) > Tolerance)
+            {
+                issues.Add(
+                    $"Line {i + 1} '{line.Description}': {line.Quantity} × {line.UnitPrice} = {expected}, " +
+                    $"but the line total says {line.LineTotal}.");
+            }
+        }
+
+        // --- subtotal should equal the sum of the line totals ---
+        var sumOfLines = invoice.LineItems.Sum(l => l.LineTotal);
+        if (Math.Abs(sumOfLines - invoice.Subtotal) > Tolerance)
+            issues.Add($"Subtotal is {invoice.Subtotal}, but the line totals add up to {sumOfLines}.");
+
+        // --- subtotal + tax should equal the grand total ---
+        var computedTotal = invoice.Subtotal + invoice.Tax;
+        if (Math.Abs(computedTotal - invoice.Total) > Tolerance)
+            issues.Add($"Subtotal {invoice.Subtotal} + tax {invoice.Tax} = {computedTotal}, " +
+                       $"but the total says {invoice.Total}.");
+
+        return issues;
+    }
+}
+==== 09 - Smart Invoice Parser/src/InvoiceParser/Services/SampleData.cs
+using InvoiceParser.Models;
+
+namespace InvoiceParser.Services;
+
+/// <summary>Raw sample invoices (as a human would paste them) plus one canned result.</summary>
+public static class SampleData
+{
+    /// <summary>A clean, internally-consistent invoice.</summary>
+    public const string CleanInvoice = """
+        ACME Tools LLC
+        Invoice #INV-1042
+        Date: 2026-03-14
+        Bill to: Contoso Cloud
+
+        Qty  Description            Unit Price   Amount
+        2    Hex wrench set         12.50        25.00
+        1    Cordless drill         89.99        89.99
+        3    Safety goggles          7.00        21.00
+
+        Subtotal: 135.99
+        Tax (10%): 13.60
+        Total: 149.59
+        Currency: USD
+        """;
+
+    /// <summary>
+    /// A messy invoice whose own numbers DON'T add up (365.00 + 73.00 = 438.00,
+    /// not 448.00). If the model extracts faithfully, the validator will flag it.
+    /// </summary>
+    public const string InconsistentInvoice = """
+        Globex Supplies — INVOICE 7781
+        14 Apr 2026
+        1 x Server rack @ 320.00 = 320.00
+        10 x Cat6 cable @ 4.50 = 45.00
+        Subtotal 365.00
+        VAT 20% 73.00
+        TOTAL 448.00
+        Currency: EUR
+        """;
+
+    /// <summary>
+    /// A pre-extracted invoice with an injected math error, used for the OFFLINE
+    /// demo so the validator lesson works even without Ollama running. The line
+    /// total (2 × 12.50 = 25.00) is wrong on purpose (says 30.00), and the grand
+    /// total doesn't match either.
+    /// </summary>
+    public static Invoice CannedBadExtraction() => new()
+    {
+        InvoiceNumber = "INV-9001",
+        VendorName = "Initech",
+        InvoiceDate = "2026-05-02",
+        Currency = "USD",
+        LineItems =
+        [
+            new InvoiceLine { Description = "Stapler", Quantity = 2, UnitPrice = 12.50m, LineTotal = 30.00m },
+            new InvoiceLine { Description = "Paper (ream)", Quantity = 5, UnitPrice = 4.00m, LineTotal = 20.00m }
+        ],
+        Subtotal = 50.00m,
+        Tax = 5.00m,
+        Total = 60.00m
+    };
+}
+==== 10 - Your Own MCP Server/.vscode/mcp.json
+{
+  // VS Code (GitHub Copilot) MCP config. Copy this into your workspace's
+  // .vscode/mcp.json, then run the "MCP: List Servers" command to start it.
+  "servers": {
+    "notes": {
+      "type": "stdio",
+      "command": "dotnet",
+      "args": [
+        "run",
+        "--project",
+        "${workspaceFolder}/10 - Your Own MCP Server/src/NotesMcp"
+      ]
+    }
+  }
+}
+==== 10 - Your Own MCP Server/src/NotesMcp/NotesMcp.csproj
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The official C# MCP SDK (server + stdio transport). -->
+    <PackageReference Include="ModelContextProtocol" Version="0.3.0-preview.2" />
+    <!-- The Generic Host wires up DI, logging, and the server's lifetime. -->
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.0" />
+  </ItemGroup>
+
+</Project>
+==== 10 - Your Own MCP Server/src/NotesMcp/Program.cs
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+using NotesMcp.Services;
+
+// =============================================================================
+// Your Own MCP Server — Expert project #10
+// Focus: Expose your own API as MCP tools for Claude, GitHub Copilot, Cursor.
+//
+// This is a "Notes" service exposed over the Model Context Protocol using the
+// STDIO transport: the AI client launches this process and talks to it over
+// stdin/stdout. See the README for how to register it in VS Code / Claude Desktop.
+// =============================================================================
+
+var builder = Host.CreateApplicationBuilder(args);
+
+// CRITICAL for stdio transport: stdout is the PROTOCOL channel (JSON-RPC).
+// All logging must go to stderr, or it corrupts the protocol and the client
+// disconnects. This one line is the most common "my MCP server won't connect" fix.
+builder.Logging.AddConsole(options => options.LogToStandardErrorThreshold = LogLevel.Trace);
+
+// "Your API": a normal singleton service, nothing AI-specific about it.
+builder.Services.AddSingleton<NoteStore>();
+
+// Register the MCP server, use stdio, and auto-discover [McpServerToolType] classes.
+builder.Services
+    .AddMcpServer()
+    .WithStdioServerTransport()
+    .WithToolsFromAssembly();
+
+await builder.Build().RunAsync();
+==== 10 - Your Own MCP Server/src/NotesMcp/Services/NoteStore.cs
+using System.Collections.Concurrent;
+
+namespace NotesMcp.Services;
+
+/// <summary>A single note.</summary>
+public sealed record Note(int Id, string Title, string Content, DateTimeOffset CreatedAt);
+
+/// <summary>
+/// A thread-safe, in-memory notes store — this is "your API" that we expose to AI.
+///
+/// LESSON — MCP tools call into ordinary services.
+/// There's nothing AI-specific here. It's a plain service you might already have.
+/// The MCP layer (see Tools/NoteTools.cs) just wraps these methods so an AI client
+/// can call them. Registered as a singleton so all tool calls share one store.
+/// </summary>
+public sealed class NoteStore
+{
+    private readonly ConcurrentDictionary<int, Note> _notes = new();
+    private int _nextId;
+
+    public Note Add(string title, string content)
+    {
+        var id = Interlocked.Increment(ref _nextId);
+        var note = new Note(id, title, content, DateTimeOffset.UtcNow);
+        _notes[id] = note;
+        return note;
+    }
+
+    public IReadOnlyList<Note> GetAll() =>
+        _notes.Values.OrderByDescending(n => n.CreatedAt).ToList();
+
+    public Note? Get(int id) => _notes.GetValueOrDefault(id);
+
+    public bool Delete(int id) => _notes.TryRemove(id, out _);
+
+    public IReadOnlyList<Note> Search(string query) =>
+        _notes.Values
+            .Where(n => n.Title.Contains(query, StringComparison.OrdinalIgnoreCase)
+                     || n.Content.Contains(query, StringComparison.OrdinalIgnoreCase))
+            .OrderByDescending(n => n.CreatedAt)
+            .ToList();
+}
+==== 10 - Your Own MCP Server/src/NotesMcp/Tools/NoteTools.cs
+using System.ComponentModel;
+using ModelContextProtocol.Server;
+using NotesMcp.Services;
+
+namespace NotesMcp.Tools;
+
+/// <summary>
+/// The MCP tools — the functions an AI client (Claude, GitHub Copilot, Cursor)
+/// can call. This is how you "expose your API" to AI.
+///
+/// LESSON — good tool metadata IS the API contract for the model.
+/// * <see cref="McpServerToolAttribute"/> registers a method as a callable tool.
+/// * <see cref="DescriptionAttribute"/> on the method and every parameter tells
+///   the model WHEN and HOW to use it. Vague descriptions → the model misuses the
+///   tool. Treat these like docs written for a very literal junior developer.
+///
+/// Dependencies (here, <see cref="NoteStore"/>) are injected by DI just like in a
+/// controller — MCP tool methods are first-class citizens of the container.
+/// </summary>
+[McpServerToolType]
+public sealed class NoteTools(NoteStore store)
+{
+    [McpServerTool(Name = "add_note")]
+    [Description("Create a new note with a title and content. Returns the new note's id.")]
+    public string AddNote(
+        [Description("Short title for the note")] string title,
+        [Description("The full text/body of the note")] string content)
+    {
+        var note = store.Add(title, content);
+        return $"Created note #{note.Id}: \"{note.Title}\"";
+    }
+
+    [McpServerTool(Name = "list_notes")]
+    [Description("List all saved notes, newest first, with their ids and titles.")]
+    public string ListNotes()
+    {
+        var notes = store.GetAll();
+        if (notes.Count == 0)
+            return "No notes yet.";
+
+        return string.Join("\n", notes.Select(n => $"#{n.Id}  {n.Title}  ({n.CreatedAt:yyyy-MM-dd HH:mm})"));
+    }
+
+    [McpServerTool(Name = "get_note")]
+    [Description("Get the full content of a single note by its id.")]
+    public string GetNote(
+        [Description("The id of the note to fetch")] int id)
+    {
+        var note = store.Get(id);
+        return note is null
+            ? $"No note with id {id}."
+            : $"#{note.Id} {note.Title}\n\n{note.Content}";
+    }
+
+    [McpServerTool(Name = "search_notes")]
+    [Description("Search notes whose title or content contains the given text (case-insensitive).")]
+    public string SearchNotes(
+        [Description("Text to search for")] string query)
+    {
+        var matches = store.Search(query);
+        if (matches.Count == 0)
+            return $"No notes matched '{query}'.";
+
+        return string.Join("\n", matches.Select(n => $"#{n.Id}  {n.Title}"));
+    }
+
+    [McpServerTool(Name = "delete_note")]
+    [Description("Delete a note by its id. Returns whether a note was removed.")]
+    public string DeleteNote(
+        [Description("The id of the note to delete")] int id)
+    {
+        return store.Delete(id)
+            ? $"Deleted note #{id}."
+            : $"No note with id {id}.";
+    }
+}
+==== 11 - AI Code Review Agent/src/CodeReviewAgent/CodeReviewAgent.csproj
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.AI" Version="10.4.1" />
+    <PackageReference Include="OllamaSharp" Version="5.4.25" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The sample code under review is DATA, not part of this app's build.
+         Exclude it from compilation but copy it next to the app so tools can read it. -->
+    <Compile Remove="sample\**\*.cs" />
+    <None Include="sample\**\*.*" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>
+==== 11 - AI Code Review Agent/src/CodeReviewAgent/Program.cs
+using System.Text.Json;
+using CodeReviewAgent;
+using Microsoft.Extensions.AI;
+using OllamaSharp;
+
+// =============================================================================
+// AI Code Review Agent — Expert project #11
+// Focus: The agent loop + tool calling.
+//
+// The agent is told to review the .cs files in the /sample folder. It then works
+// AUTONOMOUSLY: it calls list_files, reads each file, and reports issues — the LLM
+// decides which tools to call and when. Microsoft.Extensions.AI runs the loop.
+//
+// Prerequisite: Ollama with a TOOL-CAPABLE chat model, e.g.
+//   ollama pull llama3.2
+// =============================================================================
+
+var ollamaUrl = new Uri(Environment.GetEnvironmentVariable("OLLAMA_URL") ?? "http://127.0.0.1:11434");
+var model = Environment.GetEnvironmentVariable("OLLAMA_MODEL") ?? "llama3.2";
+
+var sampleDir = Path.Combine(AppContext.BaseDirectory, "sample");
+var findings = new List<Finding>();
+var tools = new ReviewTools(sampleDir, findings);
+
+Console.WriteLine("🕵️  AI Code Review Agent\n");
+
+// --- Offline check: prove the tools work without any AI -----------------------
+var files = tools.ListFiles();
+Console.WriteLine($"Files available for review ({files.Length}):");
+foreach (var f in files)
+    Console.WriteLine($"  • {f}");
+Console.WriteLine();
+
+// --- Build the chat client WITH function invocation (this is the agent loop) --
+// UseFunctionInvocation() is the middleware that turns tool-call requests from the
+// model into real method calls and feeds the results back — looping until done.
+IChatClient chat = new ChatClientBuilder(new OllamaApiClient(ollamaUrl, model))
+    .UseFunctionInvocation()
+    .Build();
+
+var chatOptions = new ChatOptions
+{
+    Tools =
+    [
+        AIFunctionFactory.Create(tools.ListFiles),
+        AIFunctionFactory.Create(tools.ReadFile),
+        AIFunctionFactory.Create(tools.ReportIssue)
+    ]
+};
+
+var messages = new List<ChatMessage>
+{
+    new(ChatRole.System, """
+        You are a senior .NET code reviewer. Review every code file in the sample set.
+        Workflow:
+          1. Call list_files to see what's there.
+          2. Call read_file for EACH file.
+          3. For every real problem (bug, security flaw, performance issue, bad
+             practice), call report_issue with a specific message and, if you can,
+             a line number.
+        Focus on genuine issues, not style nitpicks. When finished, give a short
+        summary of what you found.
+        """),
+    new(ChatRole.User, "Please review all the code files and report the issues.")
+};
+
+Console.WriteLine($"Running the agent (model: {model})...\n");
+
+try
+{
+    var response = await chat.GetResponseAsync(messages, chatOptions);
+
+    Console.WriteLine("── Agent summary ──");
+    Console.WriteLine(response.Text);
+}
+catch (HttpRequestException ex)
+{
+    Console.WriteLine($"⚠️  Couldn't reach Ollama: {ex.Message}");
+    Console.WriteLine($"    Try:  ollama pull {model}  then  ollama serve");
+    Console.WriteLine("    (The file-listing above still proves the tools are wired up.)");
+    return;
+}
+
+// --- Show everything the agent reported via the report_issue tool -------------
+Console.WriteLine($"\n── Findings recorded via tool calls ({findings.Count}) ──");
+foreach (var group in findings.GroupBy(f => f.File))
+{
+    Console.WriteLine($"\n{group.Key}");
+    foreach (var f in group.OrderBy(x => x.Line))
+        Console.WriteLine($"  [{f.Severity}] line {f.Line}: {f.Message}");
+}
+
+// Also dump as JSON — handy for feeding into CI or another tool.
+Console.WriteLine("\n── JSON ──");
+Console.WriteLine(JsonSerializer.Serialize(findings, new JsonSerializerOptions { WriteIndented = true }));
+==== 11 - AI Code Review Agent/src/CodeReviewAgent/ReviewTools.cs
+using System.ComponentModel;
+
+namespace CodeReviewAgent;
+
+/// <summary>One problem the agent found in the code.</summary>
+public sealed record Finding(string File, int Line, string Severity, string Message);
+
+/// <summary>
+/// The tools the agent can call. This is the heart of "tool calling": each method
+/// becomes a function the LLM can invoke on its own during the agent loop.
+///
+/// LESSON — tools are how an LLM acts on the world.
+/// A plain chat model can only produce text. Give it tools and it can DO things:
+/// here, discover files, read them, and record findings. Microsoft.Extensions.AI's
+/// function-invocation middleware runs the loop — model asks to call a tool, we
+/// execute it, the result goes back to the model, repeat — until it's finished.
+///
+/// SECURITY — the file tools are sandboxed to <see cref="_rootDir"/>. We strip any
+/// directory from the requested name so the model can't escape with "../../secrets".
+/// </summary>
+public sealed class ReviewTools(string rootDir, List<Finding> findings)
+{
+    private readonly string _rootDir = Path.GetFullPath(rootDir);
+
+    [Description("List the code files available to review. Returns their file names.")]
+    public string[] ListFiles() =>
+        Directory.Exists(_rootDir)
+            ? Directory.EnumerateFiles(_rootDir, "*.cs").Select(Path.GetFileName).OfType<string>().ToArray()
+            : [];
+
+    [Description("Read the full text of one code file so you can review it.")]
+    public string ReadFile(
+        [Description("The file name to read, e.g. UserService.cs")] string fileName)
+    {
+        // Path-traversal guard: keep only the file name, then re-root it.
+        var safeName = Path.GetFileName(fileName);
+        var fullPath = Path.Combine(_rootDir, safeName);
+
+        return File.Exists(fullPath)
+            ? File.ReadAllText(fullPath)
+            : $"ERROR: no file named '{safeName}'.";
+    }
+
+    [Description("Record a code-review finding. Call this once per problem you identify.")]
+    public string ReportIssue(
+        [Description("The file the issue is in")] string file,
+        [Description("The 1-based line number, or 0 if unknown")] int line,
+        [Description("Severity: Critical, Warning, or Info")] string severity,
+        [Description("A clear, specific description of the problem and how to fix it")] string message)
+    {
+        findings.Add(new Finding(Path.GetFileName(file), line, severity, message));
+        return "recorded";
+    }
+}
+==== 11 - AI Code Review Agent/src/CodeReviewAgent/sample/OrderProcessor.cs
+namespace Sample;
+
+// NOTE: Intentionally flawed sample code for the agent to review.
+public class OrderProcessor
+{
+    public void Process(List<int> orderIds)
+    {
+        // Sync-over-async: .Result can deadlock and blocks a thread.
+        var data = FetchAsync().Result;
+
+        // String concatenation inside a loop: O(n^2) allocations. Use StringBuilder.
+        string log = "";
+        foreach (var id in orderIds)
+        {
+            log = log + id + ",";
+        }
+
+        // Swallowed and ignored: nothing is done with 'data' or 'log'.
+    }
+
+    private Task<string> FetchAsync() => Task.FromResult("payload");
+}
+==== 11 - AI Code Review Agent/src/CodeReviewAgent/sample/UserService.cs
+using System.Data.SqlClient;
+
+namespace Sample;
+
+// NOTE: This file is intentionally flawed — it's the code the agent reviews.
+// It is excluded from compilation (see the .csproj) and read only as text.
+public class UserService
+{
+    public string? GetUser(int id)
+    {
+        // SQL injection: user input concatenated straight into the query.
+        var sql = "SELECT * FROM Users WHERE Id = " + id;
+
+        // New HttpClient per call -> socket exhaustion under load.
+        var http = new HttpClient();
+
+        try
+        {
+            return Query(sql);
+        }
+        catch (Exception)
+        {
+            // Swallowed exception: the error disappears with no logging.
+        }
+
+        // Returns null instead of a Result/empty -> NullReferenceException risk for callers.
+        return null;
+    }
+
+    private string Query(string sql) => sql;
+}
+==== 12 - AI App in Production/src/AiInProduction/AiInProduction.csproj
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.AI" Version="10.4.1" />
+    <PackageReference Include="OllamaSharp" Version="5.4.25" />
+    <!-- OpenTelemetry: trace + meter providers plus a console exporter so you can
+         SEE the spans and metrics your AI calls emit. -->
+    <PackageReference Include="OpenTelemetry" Version="1.19.1" />
+    <PackageReference Include="OpenTelemetry.Exporter.Console" Version="1.19.1" />
+  </ItemGroup>
+
+</Project>
+==== 12 - AI App in Production/src/AiInProduction/Cost/TokenCostCalculator.cs
+namespace AiInProduction.Cost;
+
+/// <summary>Price of a model in USD per 1,000,000 tokens.</summary>
+public sealed record ModelPricing(decimal InputPerMillion, decimal OutputPerMillion);
+
+/// <summary>
+/// Estimates the dollar cost of an LLM call from its token usage.
+///
+/// LESSON — tokens are money; track them from day one.
+/// Hosted models bill per token, split into cheaper INPUT (your prompt + history)
+/// and pricier OUTPUT (the model's reply). A chatbot that resends a long history
+/// every turn can get expensive fast. Local models (Ollama) have no per-token fee,
+/// but you still track tokens to reason about latency and context limits.
+/// </summary>
+public static class TokenCostCalculator
+{
+    // Illustrative public prices (USD / 1M tokens). Replace with your provider's real rates.
+    private static readonly Dictionary<string, ModelPricing> Prices = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["gpt-4o"] = new(2.50m, 10.00m),
+        ["gpt-4o-mini"] = new(0.15m, 0.60m),
+        ["claude-3-5-sonnet"] = new(3.00m, 15.00m),
+        ["llama3.2"] = new(0.00m, 0.00m) // local via Ollama — no per-token charge
+    };
+
+    public static decimal Estimate(string model, long inputTokens, long outputTokens)
+    {
+        // Unknown model? Assume a cheap hosted tier so cost isn't silently zero.
+        var price = Prices.TryGetValue(model, out var p) ? p : Prices["gpt-4o-mini"];
+
+        return inputTokens / 1_000_000m * price.InputPerMillion
+             + outputTokens / 1_000_000m * price.OutputPerMillion;
+    }
+
+    public static bool IsKnown(string model) => Prices.ContainsKey(model);
+}
+==== 12 - AI App in Production/src/AiInProduction/Eval/EvalRunner.cs
+using System.Diagnostics;
+using AiInProduction.Cost;
+using Microsoft.Extensions.AI;
+
+namespace AiInProduction.Eval;
+
+/// <summary>
+/// Runs a suite of <see cref="EvalCase"/>s against a chat client and scores each.
+///
+/// For every case it measures latency, reads token usage, estimates cost, and
+/// applies the scorer — the three things you care about in production: is it
+/// CORRECT (eval), is it FAST (latency), and what does it COST (tokens).
+/// </summary>
+public sealed class EvalRunner(IChatClient chat, string model)
+{
+    public async Task<EvalResult> RunAsync(EvalCase testCase, CancellationToken ct = default)
+    {
+        var stopwatch = Stopwatch.StartNew();
+
+        var response = await chat.GetResponseAsync(testCase.Prompt, cancellationToken: ct);
+
+        stopwatch.Stop();
+
+        // Token usage isn't guaranteed by every provider; default to 0 if absent.
+        var inputTokens = response.Usage?.InputTokenCount ?? 0;
+        var outputTokens = response.Usage?.OutputTokenCount ?? 0;
+        var cost = TokenCostCalculator.Estimate(model, inputTokens, outputTokens);
+
+        var (passed, detail) = Scorers.KeywordMatch(response.Text, testCase.ExpectedKeywords);
+
+        return new EvalResult(testCase.Name, passed, detail, stopwatch.Elapsed, inputTokens, outputTokens, cost);
+    }
+
+    public async Task<IReadOnlyList<EvalResult>> RunAllAsync(IEnumerable<EvalCase> cases, CancellationToken ct = default)
+    {
+        var results = new List<EvalResult>();
+        foreach (var testCase in cases)
+            results.Add(await RunAsync(testCase, ct));
+        return results;
+    }
+}
+==== 12 - AI App in Production/src/AiInProduction/Eval/Scorers.cs
+namespace AiInProduction.Eval;
+
+/// <summary>A single evaluation case: a prompt and what a good answer must contain.</summary>
+public sealed record EvalCase(string Name, string Prompt, string[] ExpectedKeywords);
+
+/// <summary>The scored outcome of running one <see cref="EvalCase"/>.</summary>
+public sealed record EvalResult(
+    string Name,
+    bool Passed,
+    string Detail,
+    TimeSpan Latency,
+    long InputTokens,
+    long OutputTokens,
+    decimal Cost);
+
+/// <summary>
+/// Deterministic scorers for LLM output.
+///
+/// LESSON — evals turn "seems fine" into a number you can track.
+/// Before you ship an AI feature, you need to know if a prompt change made things
+/// better or worse. An eval is just: a fixed set of inputs + a way to score the
+/// outputs. These scorers are plain C# (keyword + non-empty checks) so they're
+/// fast, free, and repeatable. For fuzzier quality you'd add an "LLM-as-judge"
+/// scorer — but always start with cheap deterministic ones.
+/// </summary>
+public static class Scorers
+{
+    /// <summary>Passes if the answer is non-empty and contains at least one expected keyword.</summary>
+    public static (bool Passed, string Detail) KeywordMatch(string answer, string[] expectedKeywords)
+    {
+        if (string.IsNullOrWhiteSpace(answer))
+            return (false, "empty answer");
+
+        var matched = expectedKeywords
+            .Where(k => answer.Contains(k, StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+
+        return matched.Length > 0
+            ? (true, $"matched: {string.Join(", ", matched)}")
+            : (false, $"none of [{string.Join(", ", expectedKeywords)}] found");
+    }
+}
+==== 12 - AI App in Production/src/AiInProduction/Program.cs
+using AiInProduction.Cost;
+using AiInProduction.Eval;
+using Microsoft.Extensions.AI;
+using OllamaSharp;
+using OpenTelemetry;
+using OpenTelemetry.Metrics;
+using OpenTelemetry.Trace;
+
+// =============================================================================
+// AI App in Production — Expert project #12
+// Focus: Evals, token costs, and OpenTelemetry.
+//
+// The three things that separate a demo from a production AI feature:
+//   1. EVALS         — prove quality with a repeatable scored test suite.
+//   2. TOKEN COSTS   — know what every call costs before the bill arrives.
+//   3. OBSERVABILITY — trace/measure calls with OpenTelemetry.
+//
+// Offline demos for (1) and (2) always run. The live eval run needs Ollama:
+//   ollama pull llama3.2
+// =============================================================================
+
+const string TelemetrySource = "AiApp";
+
+var ollamaUrl = new Uri(Environment.GetEnvironmentVariable("OLLAMA_URL") ?? "http://127.0.0.1:11434");
+var model = Environment.GetEnvironmentVariable("OLLAMA_MODEL") ?? "llama3.2";
+
+// --- OpenTelemetry: emit spans + metrics for every AI call -------------------
+// The console exporters print telemetry to the terminal so you can SEE it. In
+// production you'd export to Jaeger, Azure Monitor, Grafana, etc. instead.
+using var tracerProvider = Sdk.CreateTracerProviderBuilder()
+    .AddSource(TelemetrySource)
+    .AddConsoleExporter()
+    .Build();
+
+using var meterProvider = Sdk.CreateMeterProviderBuilder()
+    .AddMeter(TelemetrySource)
+    .AddConsoleExporter()
+    .Build();
+
+Console.WriteLine("🏭 AI App in Production\n");
+
+// --- (1) OFFLINE demo: token cost estimation ---------------------------------
+Console.WriteLine("── Token cost estimation (illustrative prices, per 1M tokens) ──");
+Console.WriteLine("Assuming a request with 1,500 input + 400 output tokens:\n");
+foreach (var m in new[] { "gpt-4o", "gpt-4o-mini", "claude-3-5-sonnet", "llama3.2" })
+{
+    var cost = TokenCostCalculator.Estimate(m, inputTokens: 1_500, outputTokens: 400);
+    var note = TokenCostCalculator.IsKnown(m) ? "" : "  (unknown model — assumed cheap tier)";
+    Console.WriteLine($"  {m,-20} ${cost:F6}{note}");
+}
+Console.WriteLine("  → local models cost $0 per token, but you still track usage.\n");
+
+// --- (2) OFFLINE demo: how a scorer works ------------------------------------
+Console.WriteLine("── Eval scorer demo (no AI needed) ──");
+var (passed, detail) = Scorers.KeywordMatch("The answer is 4.", ["4", "four"]);
+Console.WriteLine($"  answer 'The answer is 4.' vs expected [4, four] → {(passed ? "PASS" : "FAIL")} ({detail})\n");
+
+// --- (3) LIVE: run the eval suite through an instrumented client -------------
+// UseOpenTelemetry wraps the client so each call emits a span under "AiApp".
+IChatClient chat = new ChatClientBuilder(new OllamaApiClient(ollamaUrl, model))
+    .UseOpenTelemetry(sourceName: TelemetrySource, configure: o => o.EnableSensitiveData = true)
+    .Build();
+
+var runner = new EvalRunner(chat, model);
+
+var suite = new[]
+{
+    new EvalCase("arithmetic", "What is 2 + 2? Reply with only the number.", ["4"]),
+    new EvalCase("dotnet-cli", "What .NET CLI command builds a project? Reply with the command.", ["build"]),
+    new EvalCase("csharp-records", "Which C# keyword declares an immutable reference type introduced in C# 9? One word.", ["record"])
+};
+
+Console.WriteLine($"── Running {suite.Length} evals against '{model}' (spans print below) ──\n");
+
+IReadOnlyList<EvalResult> results;
+try
+{
+    results = await runner.RunAllAsync(suite);
+}
+catch (HttpRequestException ex)
+{
+    Console.WriteLine($"⚠️  Couldn't reach Ollama: {ex.Message}");
+    Console.WriteLine($"    Try:  ollama pull {model}  then  ollama serve");
+    Console.WriteLine("    (The cost + scorer demos above ran without it.)");
+    return;
+}
+
+// --- Report -------------------------------------------------------------------
+Console.WriteLine("\n── Eval results ──");
+Console.WriteLine($"{"Case",-16}{"Result",-8}{"Latency",-10}{"In/Out",-12}{"Cost",-12}Detail");
+foreach (var r in results)
+{
+    Console.WriteLine(
+        $"{r.Name,-16}{(r.Passed ? "PASS" : "FAIL"),-8}" +
+        $"{r.Latency.TotalMilliseconds,6:F0}ms  {r.InputTokens + "/" + r.OutputTokens,-12}" +
+        $"${r.Cost,-11:F6}{r.Detail}");
+}
+
+var passRate = results.Count(r => r.Passed) / (double)results.Count;
+var totalCost = results.Sum(r => r.Cost);
+var totalTokens = results.Sum(r => r.InputTokens + r.OutputTokens);
+
+Console.WriteLine($"\nPass rate : {passRate:P0} ({results.Count(r => r.Passed)}/{results.Count})");
+Console.WriteLine($"Tokens    : {totalTokens}");
+Console.WriteLine($"Total cost: ${totalCost:F6}  (would be non-zero on a hosted model)");
+Console.WriteLine("\nScroll up to see the OpenTelemetry spans printed for each call.");

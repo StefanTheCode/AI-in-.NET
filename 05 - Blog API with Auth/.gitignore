@@ -1,0 +1,16 @@
+# Build results
+[Bb]in/
+[Oo]bj/
+
+# Visual Studio / Rider
+.vs/
+.idea/
+*.user
+
+# SQLite databases created at runtime
+*.db
+*.db-shm
+*.db-wal
+
+# Local secrets (JWT keys etc.) — never commit these
+appsettings.*.local.json

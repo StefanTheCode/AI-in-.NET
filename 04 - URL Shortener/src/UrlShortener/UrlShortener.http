@@ -1,0 +1,31 @@
+@host = http://localhost:5090
+
+### Create a short link
+POST {{host}}/shorten
+Content-Type: application/json
+
+{
+  "url": "https://thecodeman.net"
+}
+
+### Create — INVALID url (expect 400)
+POST {{host}}/shorten
+Content-Type: application/json
+
+{
+  "url": "not-a-url"
+}
+
+### Follow a short link (replace CODE with the one you got above)
+GET {{host}}/CODE
+
+### Stats for a code
+GET {{host}}/api/stats/CODE
+
+### Rate limit demo: send this 6+ times fast -> the 6th returns 429
+POST {{host}}/shorten
+Content-Type: application/json
+
+{
+  "url": "https://learn.microsoft.com"
+}

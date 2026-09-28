@@ -1,0 +1,42 @@
+@host = http://localhost:5100
+
+### Register
+POST {{host}}/auth/register
+Content-Type: application/json
+
+{
+  "username": "stefan",
+  "password": "supersecret1"
+}
+
+### Login -> copy the "token" from the response
+# @name login
+POST {{host}}/auth/login
+Content-Type: application/json
+
+{
+  "username": "stefan",
+  "password": "supersecret1"
+}
+
+### Create a post (uses the token from the login response above)
+POST {{host}}/posts
+Content-Type: application/json
+Authorization: Bearer {{login.response.body.token}}
+
+{
+  "title": "My first post",
+  "content": "Built with AI, understood line by line."
+}
+
+### List posts (public)
+GET {{host}}/posts
+
+### Create WITHOUT a token -> 401
+POST {{host}}/posts
+Content-Type: application/json
+
+{
+  "title": "Nope",
+  "content": "This should be rejected."
+}

@@ -1,0 +1,37 @@
+@TodoApi_HostAddress = http://localhost:5080
+
+### List all todos
+GET {{TodoApi_HostAddress}}/todos
+Accept: application/json
+
+### Get one todo
+GET {{TodoApi_HostAddress}}/todos/1
+Accept: application/json
+
+### Create a todo
+POST {{TodoApi_HostAddress}}/todos
+Content-Type: application/json
+
+{
+  "title": "Learn Minimal APIs"
+}
+
+### Create a todo — INVALID (empty title) -> 400 with validation errors
+POST {{TodoApi_HostAddress}}/todos
+Content-Type: application/json
+
+{
+  "title": ""
+}
+
+### Update a todo (mark done)
+PUT {{TodoApi_HostAddress}}/todos/2
+Content-Type: application/json
+
+{
+  "title": "Build the To-Do API",
+  "isDone": true
+}
+
+### Delete a todo
+DELETE {{TodoApi_HostAddress}}/todos/3

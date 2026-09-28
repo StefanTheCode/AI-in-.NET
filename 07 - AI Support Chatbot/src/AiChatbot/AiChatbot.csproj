@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Microsoft.Extensions.AI: the vendor-neutral IChatClient abstraction.
+         Swap Ollama for OpenAI/Azure later without touching your app code. -->
+    <PackageReference Include="Microsoft.Extensions.AI" Version="10.4.1" />
+    <!-- OllamaSharp's client implements IChatClient for a local Ollama server. -->
+    <PackageReference Include="OllamaSharp" Version="5.4.25" />
+  </ItemGroup>
+
+</Project>
